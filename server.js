@@ -35,6 +35,10 @@ const sheets = google.sheets({ version: 'v4', auth });
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const JWT_SECRET = process.env.JWT_SECRET;
 
+// Daily.co configuration - USING YOUR CREDENTIALS
+const DAILY_API_KEY = process.env.DAILY_API_KEY || '8526f95d464a7af4af3e0c89b6f39079c251ae19549cb2505e8801b71f1ea46d';
+const DAILY_DOMAIN = process.env.DAILY_DOMAIN || 'apdg.daily.co';
+
 // Validate required environment variables
 if (!SPREADSHEET_ID) {
   console.error('Missing SPREADSHEET_ID environment variable');
@@ -45,6 +49,12 @@ if (!JWT_SECRET) {
   console.error('Missing JWT_SECRET environment variable');
   process.exit(1);
 }
+
+console.log('Server started successfully with Spreadsheet ID:', SPREADSHEET_ID);
+console.log('Daily.co configured with domain:', DAILY_DOMAIN);
+
+// Store active streams in memory
+const activeStreams = new Map();
 
 // Google Sheets helper functions
 class GoogleSheetsDB {
@@ -98,6 +108,78 @@ class GoogleSheetsDB {
 }
 
 const db = new GoogleSheetsDB(sheets, SPREADSHEET_ID);
+
+// Daily.co API helper
+class DailyService {
+  static async createRoom(roomName, properties = {}) {
+    const response = await fetch('https://api.daily.co/v1/rooms', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${DAILY_API_KEY}`
+      },
+      body: JSON.stringify({
+        name: roomName,
+        privacy: 'public',
+        properties: {
+          enable_chat: false,
+          enable_knocking: false,
+          enable_screenshare: false,
+          start_video_off: false,
+          start_audio_off: true,
+          exp: Math.round(Date.now() / 1000) + (60 * 60 * 24), // 24 hours
+          ...properties
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Daily API error: ${response.status} - ${errorText}`);
+    }
+
+    return await response.json();
+  }
+
+  static async getRoomToken(roomName, userId, isOwner = false) {
+    const response = await fetch('https://api.daily.co/v1/meeting-tokens', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${DAILY_API_KEY}`
+      },
+      body: JSON.stringify({
+        properties: {
+          room_name: roomName,
+          user_id: userId,
+          is_owner: isOwner,
+          enable_screenshare: false,
+          start_video_off: false,
+          start_audio_off: true
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Daily token error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.token;
+  }
+
+  static async deleteRoom(roomName) {
+    const response = await fetch(`https://api.daily.co/v1/rooms/${roomName}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${DAILY_API_KEY}`
+      }
+    });
+
+    return response.ok;
+  }
+}
 
 // Initialize Google Sheets (run once)
 app.post('/api/init', async (req, res) => {
@@ -163,6 +245,159 @@ const authenticateToken = (req, res, next) => {
     next();
   });
 };
+
+// ===== DAILY.CO STREAMING ROUTES =====
+
+// Create a streaming room
+app.post('/api/streams/start', authenticateToken, async (req, res) => {
+  try {
+    const { cameraId, cameraName } = req.body;
+    
+    if (!cameraId) {
+      return res.status(400).json({ error: 'Camera ID is required' });
+    }
+
+    // Create unique room name
+    const roomName = `camera-${cameraId}-${Date.now()}`;
+    
+    console.log('Creating Daily.co room:', roomName);
+    
+    // Create room in Daily.co
+    const room = await DailyService.createRoom(roomName, {
+      enable_recording: 'cloud',
+      enable_advanced_chat: false
+    });
+
+    // Generate owner token (for the streamer)
+    const ownerToken = await DailyService.getRoomToken(roomName, req.user.userId, true);
+
+    // Generate viewer token (for viewers)
+    const viewerToken = await DailyService.getRoomToken(roomName, 'viewer', false);
+
+    // Store stream info
+    const streamId = roomName;
+    activeStreams.set(streamId, {
+      cameraId,
+      cameraName: cameraName || 'Camera Stream',
+      owner: req.user.userId,
+      roomName,
+      ownerToken,
+      viewerToken,
+      startedAt: new Date().toISOString(),
+      isActive: true,
+      url: room.url
+    });
+
+    // Log stream event
+    await db.appendRow('events', [
+      Date.now().toString(),
+      cameraId,
+      'stream_started',
+      `Real video stream started: ${cameraName || 'Camera'}`,
+      new Date().toISOString()
+    ]);
+
+    console.log(`Daily.co stream started: ${roomName}`);
+    
+    res.json({ 
+      success: true, 
+      streamId,
+      streamInfo: {
+        id: streamId,
+        cameraId,
+        cameraName: cameraName || 'Camera Stream',
+        roomName,
+        ownerToken,
+        viewerToken,
+        url: room.url,
+        startedAt: new Date().toISOString()
+      },
+      message: 'Real video stream started successfully!'
+    });
+  } catch (error) {
+    console.error('Error starting Daily.co stream:', error);
+    res.status(500).json({ error: 'Failed to start video stream: ' + error.message });
+  }
+});
+
+// Stop a stream and delete the room
+app.post('/api/streams/:id/stop', authenticateToken, async (req, res) => {
+  try {
+    const streamId = req.params.id;
+    const stream = activeStreams.get(streamId);
+    
+    if (stream && stream.owner === req.user.userId) {
+      // Delete room from Daily.co
+      await DailyService.deleteRoom(stream.roomName);
+
+      // Log stream event
+      await db.appendRow('events', [
+        Date.now().toString(),
+        stream.cameraId,
+        'stream_stopped',
+        `Real video stream stopped: ${stream.cameraName}`,
+        new Date().toISOString()
+      ]);
+
+      activeStreams.delete(streamId);
+      console.log(`Daily.co stream stopped: ${stream.roomName}`);
+      
+      res.json({ success: true, message: 'Video stream stopped successfully' });
+    } else {
+      res.status(404).json({ error: 'Stream not found or not authorized' });
+    }
+  } catch (error) {
+    console.error('Error stopping Daily.co stream:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get stream token for viewing
+app.get('/api/streams/:id/token', authenticateToken, async (req, res) => {
+  try {
+    const streamId = req.params.id;
+    const stream = activeStreams.get(streamId);
+    
+    if (stream && stream.isActive) {
+      res.json({ 
+        success: true, 
+        token: stream.viewerToken,
+        url: stream.url,
+        roomName: stream.roomName
+      });
+    } else {
+      res.status(404).json({ error: 'Stream not found or inactive' });
+    }
+  } catch (error) {
+    console.error('Error getting stream token:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all active streams
+app.get('/api/streams', authenticateToken, async (req, res) => {
+  try {
+    const streams = Array.from(activeStreams.entries())
+      .filter(([id, stream]) => stream.isActive)
+      .map(([id, stream]) => ({
+        id,
+        cameraId: stream.cameraId,
+        cameraName: stream.cameraName,
+        owner: stream.owner,
+        roomName: stream.roomName,
+        startedAt: stream.startedAt,
+        isActive: stream.isActive,
+        url: stream.url
+      }));
+    
+    res.json({ success: true, streams });
+  } catch (error) {
+    console.error('Error getting streams:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== CAMERA MANAGEMENT ROUTES =====
 
 // Auth Routes
 app.post('/api/register', async (req, res) => {
@@ -292,7 +527,7 @@ app.get('/api/cameras', authenticateToken, async (req, res) => {
   try {
     const cameras = await db.getRows('cameras');
     const userCameras = cameras
-      .filter(row => row[1] === req.user.userId)
+      .filter(row => row[1] === req.user.userId && row[6] !== 'deleted')
       .map(row => ({
         id: row[0],
         userId: row[1],
@@ -307,6 +542,55 @@ app.get('/api/cameras', authenticateToken, async (req, res) => {
     res.json({ success: true, cameras: userCameras });
   } catch (error) {
     console.error('Get cameras error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete camera
+app.post('/api/cameras/:id/delete', authenticateToken, async (req, res) => {
+  try {
+    const cameraId = req.params.id;
+    
+    // Get all cameras
+    const cameras = await db.getRows('cameras');
+    const cameraToDelete = cameras.find(row => row[0] === cameraId && row[1] === req.user.userId);
+    
+    if (!cameraToDelete) {
+      return res.status(404).json({ error: 'Camera not found or not authorized' });
+    }
+
+    // Stop any active streams for this camera
+    for (const [streamId, stream] of activeStreams.entries()) {
+      if (stream.cameraId === cameraId) {
+        await DailyService.deleteRoom(stream.roomName);
+        activeStreams.delete(streamId);
+      }
+    }
+
+    // Mark as deleted by updating status
+    const cameraIndex = cameras.findIndex(row => row[0] === cameraId && row[1] === req.user.userId);
+    if (cameraIndex !== -1) {
+      cameras[cameraIndex][6] = 'deleted'; // Update status column
+      await db.updateRow('cameras', cameraIndex + 1, cameras[cameraIndex]);
+    }
+
+    // Log deletion event
+    await db.appendRow('events', [
+      Date.now().toString(),
+      cameraId,
+      'camera_deleted',
+      `Camera "${cameraToDelete[2]}" was deleted`,
+      new Date().toISOString()
+    ]);
+
+    console.log(`Camera marked as deleted: ${cameraId}`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Camera deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting camera:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -362,11 +646,13 @@ app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
     message: 'SecureCam API is running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    dailyEnabled: true,
+    dailyDomain: DAILY_DOMAIN
   });
 });
 
-// Serve frontend (if you're serving HTML from the same server)
+// Serve frontend
 app.get('/', (req, res) => {
   res.send(`
     <html>
@@ -375,8 +661,9 @@ app.get('/', (req, res) => {
       </head>
       <body>
         <h1>SecureCam CCTV API</h1>
-        <p>API is running successfully!</p>
+        <p>API is running successfully with Daily.co streaming!</p>
         <p>Use the frontend app to interact with this API.</p>
+        <p>Daily.co Domain: ${DAILY_DOMAIN}</p>
       </body>
     </html>
   `);
@@ -387,6 +674,7 @@ app.listen(PORT, () => {
   console.log(`SecureCam server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Google Sheet ID: ${SPREADSHEET_ID}`);
+  console.log(`Daily.co Domain: ${DAILY_DOMAIN}`);
 });
 
 module.exports = app;

@@ -1054,55 +1054,33 @@
             }
         };
 
-        // Daily.co Video Manager - FIXED VERSION
+        // Daily.co Video Manager - SIMPLE IFRAME APPROACH
 const VideoManager = {
     // Start broadcasting (as streamer)
     async startBroadcast(streamInfo) {
         try {
-            if (!window.DailyIframe) {
-                throw new Error('Daily.co SDK not loaded');
-            }
-
             console.log('Starting broadcast with stream info:', streamInfo);
 
-            // Create call frame for broadcasting
-            dailyCallFrame = window.DailyIframe.createFrame({
-                url: streamInfo.url,
-                token: streamInfo.ownerToken,
-                showLeaveButton: false,
-                showFullscreenButton: true,
-                iframeStyle: {
-                    position: 'absolute',
-                    top: '0',
-                    left: '0',
-                    width: '100%',
-                    height: '100%',
-                    border: 'none',
-                    borderRadius: '8px'
-                }
-            });
-
-            // Create a container div for the iframe
-            const iframeContainer = document.createElement('div');
-            iframeContainer.style.width = '100%';
-            iframeContainer.style.height = '100%';
-            iframeContainer.style.position = 'relative';
-            iframeContainer.appendChild(dailyCallFrame);
-
-            // Add to broadcast container
             const container = document.getElementById('broadcast-container');
-            container.innerHTML = '';
-            container.appendChild(iframeContainer);
+            container.innerHTML = '<div class="loading-overlay"><div class="loading-content"><i class="fas fa-sync fa-spin fa-3x"></i><p>Starting broadcast...</p></div></div>';
 
-            // Join the call as broadcaster
-            await dailyCallFrame.join({
-                user_name: `Broadcaster-${currentUser.name}`,
-                startVideoOff: false,
-                startAudioOff: true
-            });
+            // Create iframe manually
+            const iframe = document.createElement('iframe');
+            iframe.style.width = '100%';
+            iframe.style.height = '100%';
+            iframe.style.border = 'none';
+            iframe.style.borderRadius = '8px';
+            iframe.allow = 'camera; microphone; display-capture';
+            iframe.src = `${streamInfo.url}?t=${streamInfo.ownerToken}`;
+
+            // Clear loading and add iframe
+            setTimeout(() => {
+                container.innerHTML = '';
+                container.appendChild(iframe);
+            }, 1000);
 
             currentStreamId = streamInfo.id;
-            console.log('Started broadcasting:', streamInfo.id);
+            console.log('Broadcast iframe created for:', streamInfo.id);
             return true;
         } catch (error) {
             console.error('Error starting broadcast:', error);
@@ -1115,57 +1093,32 @@ const VideoManager = {
         try {
             console.log('Getting stream token for:', streamId);
             
-            // Get viewer token
             const tokenResponse = await ApiService.getStreamToken(streamId);
             
             if (!tokenResponse.success) {
                 throw new Error('Failed to get stream token');
             }
 
-            if (!window.DailyIframe) {
-                throw new Error('Daily.co SDK not loaded');
-            }
-
-            console.log('Creating viewer frame for:', tokenResponse.url);
-
-            // Create call frame for viewing
-            dailyCallFrame = window.DailyIframe.createFrame({
-                url: tokenResponse.url,
-                token: tokenResponse.token,
-                showLeaveButton: true,
-                showFullscreenButton: true,
-                iframeStyle: {
-                    position: 'absolute',
-                    top: '0',
-                    left: '0',
-                    width: '100%',
-                    height: '100%',
-                    border: 'none',
-                    borderRadius: '8px'
-                }
-            });
-
-            // Create a container div for the iframe
-            const iframeContainer = document.createElement('div');
-            iframeContainer.style.width = '100%';
-            iframeContainer.style.height = '100%';
-            iframeContainer.style.position = 'relative';
-            iframeContainer.appendChild(dailyCallFrame);
-
-            // Add to viewer container
             const container = document.getElementById('stream-viewer-container');
-            container.innerHTML = '';
-            container.appendChild(iframeContainer);
+            container.innerHTML = '<div class="loading-overlay"><div class="loading-content"><i class="fas fa-sync fa-spin fa-3x"></i><p>Connecting to stream...</p></div></div>';
 
-            // Join as viewer
-            await dailyCallFrame.join({
-                user_name: `Viewer-${currentUser.name}`,
-                startVideoOff: false,
-                startAudioOff: true
-            });
+            // Create iframe manually
+            const iframe = document.createElement('iframe');
+            iframe.style.width = '100%';
+            iframe.style.height = '100%';
+            iframe.style.border = 'none';
+            iframe.style.borderRadius = '8px';
+            iframe.allow = 'camera; microphone; display-capture';
+            iframe.src = `${tokenResponse.url}?t=${tokenResponse.token}`;
+
+            // Clear loading and add iframe
+            setTimeout(() => {
+                container.innerHTML = '';
+                container.appendChild(iframe);
+            }, 1000);
 
             currentStreamId = streamId;
-            console.log('Joined stream as viewer:', streamId);
+            console.log('Viewer iframe created for:', streamId);
             return true;
         } catch (error) {
             console.error('Error watching stream:', error);
@@ -1175,16 +1128,15 @@ const VideoManager = {
 
     // Stop video stream
     stopStream() {
-        if (dailyCallFrame) {
-            try {
-                dailyCallFrame.leave();
-                dailyCallFrame.destroy();
-            } catch (error) {
-                console.log('Error stopping stream (may already be stopped):', error);
-            }
-            dailyCallFrame = null;
-        }
         currentStreamId = null;
+        
+        // Clear containers
+        const broadcastContainer = document.getElementById('broadcast-container');
+        const viewerContainer = document.getElementById('stream-viewer-container');
+        if (broadcastContainer) broadcastContainer.innerHTML = '';
+        if (viewerContainer) viewerContainer.innerHTML = '';
+        
+        console.log('Video stream stopped');
     }
 };
 

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SecureCam - Multi-Device CCTV Solution</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://unpkg.com/@daily-co/daily-js"></script>
     <style>
         :root {
             --primary: #2c3e50;
@@ -108,6 +109,11 @@
         
         .btn-danger {
             background-color: var(--danger);
+            color: white;
+        }
+        
+        .btn-warning {
+            background-color: var(--warning);
             color: white;
         }
         
@@ -297,6 +303,7 @@
         .camera-actions {
             display: flex;
             gap: 10px;
+            flex-wrap: wrap;
         }
         
         .btn-sm {
@@ -333,6 +340,7 @@
             display: flex;
             justify-content: center;
             gap: 10px;
+            z-index: 100;
         }
         
         .events-panel {
@@ -456,6 +464,10 @@
             .setup-controls {
                 flex-direction: column;
             }
+            
+            .camera-actions {
+                flex-direction: column;
+            }
         }
         
         /* Hidden class for toggling views */
@@ -547,6 +559,17 @@
             background: var(--danger);
             color: white;
         }
+        
+        .streaming-active {
+            border: 2px solid var(--success);
+        }
+        
+        .daily-frame {
+            width: 100%;
+            height: 100%;
+            border: none;
+            border-radius: 8px;
+        }
     </style>
 </head>
 <body>
@@ -562,6 +585,7 @@
                 <ul>
                     <li><a href="#" class="nav-link active" data-page="dashboard">Dashboard</a></li>
                     <li><a href="#" class="nav-link" data-page="cameras">My Cameras</a></li>
+                    <li><a href="#" class="nav-link" data-page="streams">Live Streams</a></li>
                     <li><a href="#" class="nav-link" data-page="events">Events</a></li>
                     <li><a href="#" class="nav-link" data-page="settings">Settings</a></li>
                 </ul>
@@ -580,7 +604,7 @@
             <div class="auth-header">
                 <i class="fas fa-video fa-2x" style="color: var(--secondary); margin-bottom: 10px;"></i>
                 <h2>Welcome to SecureCam Pro</h2>
-                <p>Multi-device CCTV monitoring</p>
+                <p>Multi-device CCTV monitoring with real video streaming</p>
             </div>
             
             <div id="login-alert" class="alert alert-error hidden">
@@ -604,9 +628,10 @@
             
             <!-- Demo Credentials -->
             <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 4px; font-size: 0.9rem;">
-                <p style="margin-bottom: 8px; font-weight: 600;">Demo Account:</p>
-                <p>Email: demo@securecam.com</p>
-                <p>Password: password123</p>
+                <p style="margin-bottom: 8px; font-weight: 600;">First Time User?</p>
+                <p>1. Register a new account</p>
+                <p>2. Create cameras and start streaming</p>
+                <p>3. Watch streams from other devices</p>
             </div>
         </div>
 
@@ -652,8 +677,8 @@
             <h1 class="page-title"><i class="fas fa-tachometer-alt"></i> Dashboard</h1>
             
             <div class="streaming-info">
-                <h3><i class="fas fa-globe"></i> Multi-Device Streaming</h3>
-                <p>View your cameras from any device with internet connection. Streams are securely transmitted and stored in the cloud.</p>
+                <h3><i class="fas fa-broadcast-tower"></i> Real Multi-Device Video Streaming</h3>
+                <p>Start a video stream from one device and watch it from any other device. Powered by Daily.co real-time video technology.</p>
             </div>
             
             <div class="dashboard-stats">
@@ -663,16 +688,16 @@
                     </div>
                     <div class="stat-info">
                         <h3 id="active-cameras-count">0</h3>
-                        <p>Active Cameras</p>
+                        <p>Your Cameras</p>
                     </div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon success">
-                        <i class="fas fa-calendar-check"></i>
+                        <i class="fas fa-satellite-dish"></i>
                     </div>
                     <div class="stat-info">
-                        <h3 id="events-today">0</h3>
-                        <p>Events Today</p>
+                        <h3 id="active-streams-count">0</h3>
+                        <p>Active Streams</p>
                     </div>
                 </div>
                 <div class="stat-card">
@@ -681,7 +706,7 @@
                     </div>
                     <div class="stat-info">
                         <h3 id="total-hours">0</h3>
-                        <p>Total Hours Recorded</p>
+                        <p>Streaming Hours</p>
                     </div>
                 </div>
             </div>
@@ -689,7 +714,7 @@
             <h2 style="margin: 2rem 0 1rem;">Recent Events</h2>
             <div class="events-panel" id="recent-events">
                 <div class="event-item">
-                    <p>No events yet. Events will appear here when cameras detect motion.</p>
+                    <p>No events yet. Events will appear here when you start streaming.</p>
                 </div>
             </div>
         </div>
@@ -704,12 +729,11 @@
             </div>
             
             <div class="streaming-info">
-                <h3><i class="fas fa-satellite-dish"></i> Remote Viewing Ready</h3>
-                <p>All your cameras can be accessed from any device. Click 'View' to watch live streams from anywhere.</p>
+                <h3><i class="fas fa-satellite-dish"></i> Real Video Streaming</h3>
+                <p>Click "Start Streaming" to broadcast your camera feed. Other devices can watch your stream in real-time from the "Live Streams" page.</p>
             </div>
             
             <div class="cameras-grid" id="cameras-list">
-                <!-- Cameras will be loaded here dynamically -->
                 <div class="camera-card">
                     <div class="camera-preview">
                         <i class="fas fa-video fa-3x"></i>
@@ -720,7 +744,7 @@
                     </div>
                     <div class="camera-info">
                         <h3>No Cameras</h3>
-                        <p>Click "Add Camera" to get started</p>
+                        <p>Click "Add Camera" to get started with video streaming</p>
                     </div>
                 </div>
             </div>
@@ -737,20 +761,12 @@
             
             <div class="setup-container">
                 <div class="streaming-info">
-                    <h3><i class="fas fa-cloud-upload-alt"></i> Cloud Streaming Setup</h3>
-                    <p>This camera will be accessible from any device with internet. Streams are securely stored and transmitted.</p>
+                    <h3><i class="fas fa-cloud-upload-alt"></i> Video Streaming Setup</h3>
+                    <p>This camera will be able to broadcast real video streams to other devices using Daily.co technology.</p>
                 </div>
                 
                 <div class="alert alert-info">
-                    <i class="fas fa-info-circle"></i> Allow camera access when prompted. This feed will be streamed to the cloud.
-                </div>
-                
-                <div class="camera-preview-setup">
-                    <video id="setup-camera-feed" autoplay playsinline class="hidden"></video>
-                    <div id="setup-camera-placeholder">
-                        <i class="fas fa-camera fa-5x"></i>
-                        <p style="margin-top: 10px;">Camera feed will appear here</p>
-                    </div>
+                    <i class="fas fa-info-circle"></i> After setup, click "Start Streaming" to begin broadcasting to other devices.
                 </div>
                 
                 <div class="form-group">
@@ -773,86 +789,85 @@
                 </div>
                 
                 <div class="setup-controls">
-                    <button class="btn btn-primary" id="start-camera-btn">
-                        <i class="fas fa-play"></i> Start Camera
-                    </button>
-                    <button class="btn btn-danger hidden" id="stop-camera-btn">
-                        <i class="fas fa-stop"></i> Stop Camera
-                    </button>
-                    <button class="btn btn-success" id="capture-snapshot-btn">
-                        <i class="fas fa-camera"></i> Take Snapshot
-                    </button>
                     <button class="btn btn-primary" id="save-camera-btn">
                         <i class="fas fa-save"></i> Save Camera
                     </button>
                 </div>
-                
-                <div id="streaming-status" class="alert alert-info hidden" style="margin-top: 1rem;">
-                    <i class="fas fa-sync fa-spin"></i> Connecting to cloud streaming service...
-                </div>
-                
-                <div class="snapshot-container" id="snapshots-container"></div>
             </div>
         </div>
 
-        <!-- Live View Page -->
-        <div id="live-view-page" class="hidden">
+        <!-- Live Streams Page -->
+        <div id="streams-page" class="hidden">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-                <h1 class="page-title"><i class="fas fa-eye"></i> Live View - <span id="camera-name">Camera</span></h1>
-                <button class="btn btn-outline" id="back-to-cameras">
-                    <i class="fas fa-arrow-left"></i> Back to Cameras
+                <h1 class="page-title"><i class="fas fa-satellite-dish"></i> Live Streams</h1>
+                <button class="btn btn-outline" onclick="UIManager.loadStreams()">
+                    <i class="fas fa-sync"></i> Refresh
                 </button>
             </div>
             
             <div class="streaming-info">
-                <h3><i class="fas fa-wifi"></i> Remote Streaming Active</h3>
-                <p>You are viewing a live stream that can be accessed from any device. Stream ID: <strong id="stream-id">CAM-001</strong></p>
+                <h3><i class="fas fa-broadcast-tower"></i> Watch Live Streams</h3>
+                <p>Watch real-time video streams from other devices. Click "Watch Stream" to join any active broadcast.</p>
             </div>
             
-            <div class="live-container">
-                <div class="video-container">
-                    <video id="camera-feed" autoplay playsinline class="hidden"></video>
-                    <div id="camera-placeholder">
-                        <i class="fas fa-video fa-5x"></i>
-                        <p style="margin-top: 10px;">Click 'Start Stream' to begin remote viewing</p>
+            <div class="cameras-grid" id="streams-list">
+                <div class="camera-card">
+                    <div class="camera-preview">
+                        <i class="fas fa-satellite-dish fa-3x"></i>
                     </div>
-                    <div class="video-controls">
-                        <button class="btn btn-primary" id="start-live-camera">
-                            <i class="fas fa-play"></i> Start Stream
-                        </button>
-                        <button class="btn btn-danger hidden" id="stop-live-camera">
-                            <i class="fas fa-stop"></i> Stop Stream
-                        </button>
-                        <button class="btn btn-outline" style="color: white; border-color: white;" id="take-snapshot">
-                            <i class="fas fa-camera"></i> Snapshot
-                        </button>
-                        <button class="btn btn-outline" style="color: white; border-color: white;" id="record-event-btn">
-                            <i class="fas fa-record-vinyl"></i> Record Event
-                        </button>
-                    </div>
-                </div>
-                
-                <div class="events-panel">
-                    <h3>Stream Information</h3>
-                    <div class="event-item">
-                        <h4>Stream Status</h4>
-                        <p id="stream-status">Ready to connect</p>
-                        <div class="event-time" id="stream-uptime">--</div>
-                    </div>
-                    <div class="event-item">
-                        <h4>Connection Quality</h4>
-                        <p id="connection-quality">Excellent</p>
-                        <div class="event-time">Latency: <span id="stream-latency">--</span> ms</div>
-                    </div>
-                    <div class="event-item">
-                        <h4>Camera Events</h4>
-                        <p id="camera-events-count">No events recorded</p>
-                        <div class="event-time" id="last-event-time">--</div>
+                    <div class="camera-info">
+                        <h3>Loading streams...</h3>
+                        <p>Active video streams will appear here</p>
                     </div>
                 </div>
             </div>
+        </div>
+
+        <!-- Stream Broadcaster Page -->
+        <div id="stream-broadcaster-page" class="hidden">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h1 class="page-title"><i class="fas fa-broadcast-tower"></i> Live Broadcast - <span id="broadcast-camera-name">Camera</span></h1>
+                <button class="btn btn-danger" id="stop-broadcast-btn">
+                    <i class="fas fa-stop"></i> Stop Broadcasting
+                </button>
+            </div>
             
-            <div class="snapshot-container" id="live-snapshots-container"></div>
+            <div class="streaming-info">
+                <h3><i class="fas fa-satellite"></i> You are Live Broadcasting</h3>
+                <p>Your camera feed is being streamed to other devices in real-time. They can watch your stream from the "Live Streams" page.</p>
+            </div>
+            
+            <div class="video-container">
+                <div id="broadcast-container" style="width: 100%; height: 100%; position: relative;">
+                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: white;">
+                        <div style="text-align: center;">
+                            <i class="fas fa-sync fa-spin fa-3x"></i>
+                            <p style="margin-top: 20px;">Starting video broadcast...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stream Viewer Page -->
+        <div id="stream-viewer-page" class="hidden">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h1 class="page-title"><i class="fas fa-eye"></i> <span id="stream-viewer-title">Watching Stream</span></h1>
+                <button class="btn btn-outline" id="stop-watching-btn">
+                    <i class="fas fa-arrow-left"></i> Stop Watching
+                </button>
+            </div>
+            
+            <div class="video-container">
+                <div id="stream-viewer-container" style="width: 100%; height: 100%; position: relative;">
+                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: white;">
+                        <div style="text-align: center;">
+                            <i class="fas fa-sync fa-spin fa-3x"></i>
+                            <p style="margin-top: 20px;">Connecting to video stream...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Events Page -->
@@ -882,11 +897,6 @@
                     <input type="email" id="settings-email" class="form-control" value="john.doe@example.com">
                 </div>
                 
-                <div class="form-group">
-                    <label for="settings-phone">Phone Number</label>
-                    <input type="tel" id="settings-phone" class="form-control" value="+1 (555) 123-4567">
-                </div>
-                
                 <h3 style="margin: 2rem 0 1rem;">Streaming Preferences</h3>
                 
                 <div style="display: flex; flex-direction: column; gap: 10px;">
@@ -894,10 +904,7 @@
                         <input type="checkbox" checked> Enable cloud recording
                     </label>
                     <label style="display: flex; align-items: center; gap: 10px;">
-                        <input type="checkbox" checked> Motion detection alerts
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 10px;">
-                        <input type="checkbox"> Auto-upload snapshots to cloud
+                        <input type="checkbox" checked> Auto-start streaming when camera is added
                     </label>
                 </div>
                 
@@ -905,13 +912,10 @@
                 
                 <div style="display: flex; flex-direction: column; gap: 10px;">
                     <label style="display: flex; align-items: center; gap: 10px;">
-                        <input type="checkbox" checked> Email notifications for motion events
+                        <input type="checkbox" checked> Notifications when stream starts
                     </label>
                     <label style="display: flex; align-items: center; gap: 10px;">
-                        <input type="checkbox" checked> Push notifications for camera offline
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 10px;">
-                        <input type="checkbox"> SMS alerts for critical events
+                        <input type="checkbox" checked> Notifications when viewers join
                     </label>
                 </div>
                 
@@ -927,7 +931,7 @@
                 <i class="fas fa-video"></i>
                 <span>SecureCam Pro</span>
             </div>
-            <p>Multi-device CCTV solution with cloud streaming</p>
+            <p>Multi-device CCTV solution with real-time video streaming</p>
             <div class="footer-links">
                 <a href="#">Privacy Policy</a>
                 <a href="#">Terms of Service</a>
@@ -939,9 +943,11 @@
 
     <script>
         // API Configuration - UPDATE THIS WITH YOUR RENDER URL
-        const API_BASE_URL = 'https://portable-cctv.onrender.com'; // Change this to your actual Render URL
+        const API_BASE_URL = 'https://your-app-name.onrender.com'; // Change this to your actual Render URL
         let currentUser = null;
         let authToken = null;
+        let dailyCallFrame = null;
+        let currentStreamId = null;
 
         // API Service
         const ApiService = {
@@ -1008,6 +1014,12 @@
                 });
             },
 
+            async deleteCamera(cameraId) {
+                return await this.request(`/api/cameras/${cameraId}/delete`, {
+                    method: 'POST'
+                });
+            },
+
             async getEvents() {
                 return await this.request('/api/events');
             },
@@ -1019,94 +1031,136 @@
                 });
             },
 
-            async initDatabase() {
-                return await this.request('/api/init', {
+            // Daily.co Streaming APIs
+            async startStream(cameraId, cameraName) {
+                return await this.request('/api/streams/start', {
+                    method: 'POST',
+                    body: JSON.stringify({ cameraId, cameraName })
+                });
+            },
+
+            async stopStream(streamId) {
+                return await this.request(`/api/streams/${streamId}/stop`, {
                     method: 'POST'
                 });
+            },
+
+            async getStreams() {
+                return await this.request('/api/streams');
+            },
+
+            async getStreamToken(streamId) {
+                return await this.request(`/api/streams/${streamId}/token`);
             }
         };
 
-        // Camera Manager
-        const CameraManager = {
-            stream: null,
-            currentCamera: null,
-
-            async startCamera(videoElement, placeholderElement) {
+        // Daily.co Video Manager
+        const VideoManager = {
+            // Start broadcasting (as streamer)
+            async startBroadcast(streamInfo) {
                 try {
-                    this.stream = await navigator.mediaDevices.getUserMedia({ 
-                        video: { 
-                            width: { ideal: 1280 },
-                            height: { ideal: 720 } 
-                        }, 
-                        audio: false 
-                    });
-                    
-                    videoElement.srcObject = this.stream;
-                    videoElement.classList.remove('hidden');
-                    
-                    if (placeholderElement) {
-                        placeholderElement.classList.add('hidden');
+                    if (!window.DailyIframe) {
+                        throw new Error('Daily.co SDK not loaded');
                     }
-                    
-                    return { success: true };
+
+                    // Create call frame for broadcasting
+                    dailyCallFrame = window.DailyIframe.createFrame({
+                        url: streamInfo.url,
+                        token: streamInfo.ownerToken,
+                        showLeaveButton: false,
+                        showFullscreenButton: true,
+                        iframeStyle: {
+                            position: 'absolute',
+                            top: '0',
+                            left: '0',
+                            width: '100%',
+                            height: '100%',
+                            border: 'none',
+                            borderRadius: '8px'
+                        }
+                    });
+
+                    // Add to broadcast container
+                    const container = document.getElementById('broadcast-container');
+                    container.innerHTML = '';
+                    container.appendChild(dailyCallFrame);
+
+                    // Join the call as broadcaster
+                    await dailyCallFrame.join({
+                        user_name: `Broadcaster-${currentUser.name}`,
+                        startVideoOff: false,
+                        startAudioOff: true
+                    });
+
+                    currentStreamId = streamInfo.id;
+                    console.log('Started broadcasting:', streamInfo.id);
+                    return true;
                 } catch (error) {
-                    console.error('Error accessing camera:', error);
-                    return { 
-                        success: false, 
-                        message: 'Could not access camera. Please make sure your camera is connected and you have granted permission.' 
-                    };
+                    console.error('Error starting broadcast:', error);
+                    throw error;
                 }
             },
 
-            stopCamera(videoElement, placeholderElement) {
-                if (this.stream) {
-                    this.stream.getTracks().forEach(track => track.stop());
-                    this.stream = null;
-                }
-                
-                if (videoElement) {
-                    videoElement.srcObject = null;
-                    videoElement.classList.add('hidden');
-                }
-                
-                if (placeholderElement) {
-                    placeholderElement.classList.remove('hidden');
+            // Watch stream (as viewer)
+            async watchStream(streamId) {
+                try {
+                    // Get viewer token
+                    const tokenResponse = await ApiService.getStreamToken(streamId);
+                    
+                    if (!tokenResponse.success) {
+                        throw new Error('Failed to get stream token');
+                    }
+
+                    if (!window.DailyIframe) {
+                        throw new Error('Daily.co SDK not loaded');
+                    }
+
+                    // Create call frame for viewing
+                    dailyCallFrame = window.DailyIframe.createFrame({
+                        url: tokenResponse.url,
+                        token: tokenResponse.token,
+                        showLeaveButton: true,
+                        showFullscreenButton: true,
+                        iframeStyle: {
+                            position: 'absolute',
+                            top: '0',
+                            left: '0',
+                            width: '100%',
+                            height: '100%',
+                            border: 'none',
+                            borderRadius: '8px'
+                        }
+                    });
+
+                    // Add to viewer container
+                    const container = document.getElementById('stream-viewer-container');
+                    container.innerHTML = '';
+                    container.appendChild(dailyCallFrame);
+
+                    // Join as viewer
+                    await dailyCallFrame.join({
+                        user_name: `Viewer-${currentUser.name}`,
+                        startVideoOff: false,
+                        startAudioOff: true
+                    });
+
+                    currentStreamId = streamId;
+                    console.log('Joined stream as viewer:', streamId);
+                    return true;
+                } catch (error) {
+                    console.error('Error watching stream:', error);
+                    throw error;
                 }
             },
 
-            takeSnapshot(videoElement, containerElement) {
-                if (!videoElement.srcObject) {
-                    alert('Please start the camera first');
-                    return;
+            // Stop video stream
+            stopStream() {
+                if (dailyCallFrame) {
+                    dailyCallFrame.leave();
+                    dailyCallFrame.destroy();
+                    dailyCallFrame = null;
                 }
-                
-                const canvas = document.createElement('canvas');
-                const context = canvas.getContext('2d');
-                
-                canvas.width = videoElement.videoWidth;
-                canvas.height = videoElement.videoHeight;
-                
-                context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-                
-                const snapshot = document.createElement('img');
-                snapshot.src = canvas.toDataURL('image/png');
-                snapshot.className = 'snapshot';
-                
-                const timestamp = new Date().toLocaleString();
-                snapshot.title = `Snapshot taken at ${timestamp}`;
-                
-                containerElement.prepend(snapshot);
-                
-                // Log event if we have a current camera
-                if (this.currentCamera) {
-                    ApiService.createEvent({
-                        cameraId: this.currentCamera.id,
-                        type: 'snapshot',
-                        description: 'Manual snapshot taken'
-                    }).catch(console.error);
-                }
-                
-                return snapshot.src;
+                currentStreamId = null;
             }
         };
 
@@ -1129,7 +1183,7 @@
                                 </div>
                                 <div class="camera-info">
                                     <h3>No Cameras</h3>
-                                    <p>Click "Add Camera" to get started</p>
+                                    <p>Click "Add Camera" to get started with video streaming</p>
                                 </div>
                             </div>
                         `;
@@ -1142,19 +1196,19 @@
                                 <i class="fas fa-video fa-3x"></i>
                                 <div class="device-status" style="position: absolute; bottom: 10px; left: 10px;">
                                     <i class="fas fa-circle ${camera.status === 'online' ? 'status-online' : 'status-offline'}"></i>
-                                    <span>${camera.status === 'online' ? 'Streaming Online' : 'Offline'}</span>
+                                    <span>${camera.status === 'online' ? 'Ready to Stream' : 'Offline'}</span>
                                 </div>
                             </div>
                             <div class="camera-info">
                                 <h3>${camera.name}</h3>
                                 <p>Location: ${camera.location}</p>
-                                <p>Stream ID: ${camera.streamId}</p>
+                                <p>Quality: ${camera.quality}</p>
                                 <div class="camera-actions">
-                                    <button class="btn btn-primary btn-sm view-camera-btn" data-camera='${JSON.stringify(camera).replace(/'/g, "&apos;")}'>
-                                        <i class="fas fa-eye"></i> View Live
+                                    <button class="btn btn-success btn-sm start-stream-btn" data-camera-id="${camera.id}" data-camera-name="${camera.name}">
+                                        <i class="fas fa-satellite-dish"></i> Start Streaming
                                     </button>
-                                    <button class="btn btn-outline btn-sm">
-                                        <i class="fas fa-cog"></i> Settings
+                                    <button class="btn btn-danger btn-sm delete-camera-btn" data-camera-id="${camera.id}" data-camera-name="${camera.name}">
+                                        <i class="fas fa-trash"></i> Delete
                                     </button>
                                 </div>
                             </div>
@@ -1162,13 +1216,68 @@
                     `).join('');
                     
                     // Update dashboard stats
-                    document.getElementById('active-cameras-count').textContent = 
-                        response.cameras.filter(cam => cam.status === 'online').length;
-                    document.getElementById('total-hours').textContent = response.cameras.length * 15; // Mock data
+                    document.getElementById('active-cameras-count').textContent = response.cameras.length;
                     
                 } catch (error) {
                     console.error('Error loading cameras:', error);
-                    showAlert('Error loading cameras: ' + error.message);
+                    alert('Error loading cameras: ' + error.message);
+                }
+            },
+
+            async loadStreams() {
+                try {
+                    const response = await ApiService.getStreams();
+                    const streamsContainer = document.getElementById('streams-list');
+                    
+                    if (!streamsContainer) return;
+                    
+                    if (response.streams.length === 0) {
+                        streamsContainer.innerHTML = `
+                            <div class="camera-card">
+                                <div class="camera-preview">
+                                    <i class="fas fa-satellite-dish fa-3x"></i>
+                                </div>
+                                <div class="camera-info">
+                                    <h3>No Active Streams</h3>
+                                    <p>Start a stream from the Cameras page to begin broadcasting</p>
+                                </div>
+                            </div>
+                        `;
+                        document.getElementById('active-streams-count').textContent = '0';
+                        return;
+                    }
+                    
+                    streamsContainer.innerHTML = response.streams.map(stream => `
+                        <div class="camera-card streaming-active">
+                            <div class="camera-preview live">
+                                <i class="fas fa-broadcast-tower fa-3x"></i>
+                                <div class="device-status" style="position: absolute; bottom: 10px; left: 10px;">
+                                    <i class="fas fa-circle status-online"></i>
+                                    <span>LIVE STREAMING</span>
+                                </div>
+                            </div>
+                            <div class="camera-info">
+                                <h3>${stream.cameraName}</h3>
+                                <p>Streaming since: ${new Date(stream.startedAt).toLocaleTimeString()}</p>
+                                <p>Room: ${stream.roomName}</p>
+                                <div class="camera-actions">
+                                    <button class="btn btn-primary btn-sm watch-stream-btn" data-stream-id="${stream.id}" data-stream-name="${stream.cameraName}">
+                                        <i class="fas fa-eye"></i> Watch Stream
+                                    </button>
+                                    ${stream.owner === currentUser.id ? `
+                                        <button class="btn btn-danger btn-sm stop-stream-btn" data-stream-id="${stream.id}">
+                                            <i class="fas fa-stop"></i> Stop Stream
+                                        </button>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+                    
+                    document.getElementById('active-streams-count').textContent = response.streams.length;
+                    
+                } catch (error) {
+                    console.error('Error loading streams:', error);
                 }
             },
 
@@ -1182,7 +1291,7 @@
                     
                     if (events.length === 0) {
                         eventsContainer.innerHTML = '<div class="event-item"><p>No events recorded yet.</p></div>';
-                        recentEventsContainer.innerHTML = '<div class="event-item"><p>No events yet. Events will appear here when cameras detect motion.</p></div>';
+                        recentEventsContainer.innerHTML = '<div class="event-item"><p>No events yet. Events will appear here when you start streaming.</p></div>';
                         return;
                     }
                     
@@ -1190,8 +1299,8 @@
                     const recentEvents = events.slice(0, 5);
                     recentEventsContainer.innerHTML = recentEvents.map(event => `
                         <div class="event-item">
-                            <h4>${event.type} - ${event.description}</h4>
-                            <p>Camera ID: ${event.cameraId}</p>
+                            <h4>${event.type}</h4>
+                            <p>${event.description}</p>
                             <div class="event-time">${new Date(event.timestamp).toLocaleString()}</div>
                         </div>
                     `).join('');
@@ -1205,13 +1314,6 @@
                         </div>
                     `).join('');
                     
-                    document.getElementById('events-today').textContent = 
-                        events.filter(event => {
-                            const eventDate = new Date(event.timestamp);
-                            const today = new Date();
-                            return eventDate.toDateString() === today.toDateString();
-                        }).length;
-                        
                 } catch (error) {
                     console.error('Error loading events:', error);
                 }
@@ -1233,6 +1335,13 @@
                 
                 // Check API health every 30 seconds
                 setInterval(() => this.checkAPIHealth(), 30000);
+                
+                // Refresh streams every 10 seconds when on streams page
+                setInterval(() => {
+                    if (document.getElementById('streams-page') && !document.getElementById('streams-page').classList.contains('hidden')) {
+                        UIManager.loadStreams();
+                    }
+                }, 10000);
             },
 
             async checkAPIHealth() {
@@ -1271,6 +1380,7 @@
                 
                 // Load initial data
                 UIManager.loadCameras();
+                UIManager.loadStreams();
                 UIManager.loadEvents();
             },
 
@@ -1348,7 +1458,7 @@
 
                 // Logout
                 document.getElementById('logout-btn').addEventListener('click', () => {
-                    CameraManager.stopCamera();
+                    VideoManager.stopStream();
                     currentUser = null;
                     authToken = null;
                     localStorage.removeItem('securecam_user');
@@ -1368,10 +1478,14 @@
                         if (page === 'dashboard') {
                             showPage('dashboard-page');
                             UIManager.loadCameras();
+                            UIManager.loadStreams();
                             UIManager.loadEvents();
                         } else if (page === 'cameras') {
                             showPage('cameras-page');
                             UIManager.loadCameras();
+                        } else if (page === 'streams') {
+                            showPage('streams-page');
+                            UIManager.loadStreams();
                         } else if (page === 'events') {
                             showPage('events-page');
                             UIManager.loadEvents();
@@ -1387,43 +1501,10 @@
                 });
 
                 document.getElementById('back-to-cameras-from-setup').addEventListener('click', () => {
-                    CameraManager.stopCamera(
-                        document.getElementById('setup-camera-feed'),
-                        document.getElementById('setup-camera-placeholder')
-                    );
-                    toggleSetupCameraButtons(false);
                     showPage('cameras-page');
                 });
 
-                // Camera setup controls
-                document.getElementById('start-camera-btn').addEventListener('click', async () => {
-                    const result = await CameraManager.startCamera(
-                        document.getElementById('setup-camera-feed'),
-                        document.getElementById('setup-camera-placeholder')
-                    );
-                    
-                    if (result.success) {
-                        toggleSetupCameraButtons(true);
-                    } else {
-                        alert(result.message);
-                    }
-                });
-
-                document.getElementById('stop-camera-btn').addEventListener('click', () => {
-                    CameraManager.stopCamera(
-                        document.getElementById('setup-camera-feed'),
-                        document.getElementById('setup-camera-placeholder')
-                    );
-                    toggleSetupCameraButtons(false);
-                });
-
-                document.getElementById('capture-snapshot-btn').addEventListener('click', () => {
-                    CameraManager.takeSnapshot(
-                        document.getElementById('setup-camera-feed'),
-                        document.getElementById('snapshots-container')
-                    );
-                });
-
+                // Save camera
                 document.getElementById('save-camera-btn').addEventListener('click', async () => {
                     const name = document.getElementById('camera-name').value;
                     const location = document.getElementById('camera-location').value;
@@ -1438,18 +1519,11 @@
                         const result = await ApiService.createCamera({ name, location, quality });
                         
                         if (result.success) {
-                            alert(`Camera "${name}" saved successfully!`);
+                            alert(`Camera "${name}" saved successfully! You can now start streaming.`);
                             
                             // Reset form
                             document.getElementById('camera-name').value = '';
                             document.getElementById('camera-location').value = '';
-                            document.getElementById('snapshots-container').innerHTML = '';
-                            
-                            CameraManager.stopCamera(
-                                document.getElementById('setup-camera-feed'),
-                                document.getElementById('setup-camera-placeholder')
-                            );
-                            toggleSetupCameraButtons(false);
                             
                             showPage('cameras-page');
                             UIManager.loadCameras();
@@ -1459,78 +1533,114 @@
                     }
                 });
 
-                // Live view controls
-                document.getElementById('start-live-camera').addEventListener('click', async () => {
-                    const result = await CameraManager.startCamera(
-                        document.getElementById('camera-feed'),
-                        document.getElementById('camera-placeholder')
-                    );
-                    
-                    if (result.success) {
-                        toggleCameraButtons(true);
-                        document.getElementById('stream-status').textContent = 'Streaming live to cloud';
-                    } else {
-                        alert(result.message);
-                    }
-                });
-
-                document.getElementById('stop-live-camera').addEventListener('click', () => {
-                    CameraManager.stopCamera(
-                        document.getElementById('camera-feed'),
-                        document.getElementById('camera-placeholder')
-                    );
-                    toggleCameraButtons(false);
-                    document.getElementById('stream-status').textContent = 'Stream stopped';
-                });
-
-                document.getElementById('take-snapshot').addEventListener('click', () => {
-                    CameraManager.takeSnapshot(
-                        document.getElementById('camera-feed'),
-                        document.getElementById('live-snapshots-container')
-                    );
-                });
-
-                document.getElementById('record-event-btn').addEventListener('click', async () => {
-                    if (!CameraManager.currentCamera) {
-                        alert('No camera selected');
-                        return;
-                    }
-                    
-                    try {
-                        await ApiService.createEvent({
-                            cameraId: CameraManager.currentCamera.id,
-                            type: 'manual',
-                            description: 'Manual event recorded by user'
-                        });
-                        alert('Event recorded successfully!');
-                        UIManager.loadEvents();
-                    } catch (error) {
-                        alert('Error recording event: ' + error.message);
-                    }
-                });
-
-                // Dynamic camera view buttons
-                document.addEventListener('click', (e) => {
-                    if (e.target.closest('.view-camera-btn')) {
-                        const button = e.target.closest('.view-camera-btn');
-                        const cameraData = JSON.parse(button.getAttribute('data-camera').replace(/&apos;/g, "'"));
+                // Dynamic button handlers
+                document.addEventListener('click', async (e) => {
+                    // Start streaming
+                    if (e.target.closest('.start-stream-btn')) {
+                        const button = e.target.closest('.start-stream-btn');
+                        const cameraId = button.getAttribute('data-camera-id');
+                        const cameraName = button.getAttribute('data-camera-name');
                         
-                        CameraManager.currentCamera = cameraData;
-                        document.getElementById('camera-name').textContent = cameraData.name;
-                        document.getElementById('stream-id').textContent = cameraData.streamId;
-                        showPage('live-view-page');
+                        try {
+                            const result = await ApiService.startStream(cameraId, cameraName);
+                            
+                            if (result.success) {
+                                // Switch to broadcaster page
+                                document.getElementById('broadcast-camera-name').textContent = cameraName;
+                                showPage('stream-broadcaster-page');
+                                
+                                // Start the video broadcast
+                                await VideoManager.startBroadcast(result.streamInfo);
+                                alert('You are now broadcasting live! Other devices can watch your stream.');
+                            }
+                        } catch (error) {
+                            alert('Error starting video stream: ' + error.message);
+                        }
+                    }
+                    
+                    // Stop streaming
+                    if (e.target.closest('.stop-stream-btn')) {
+                        const button = e.target.closest('.stop-stream-btn');
+                        const streamId = button.getAttribute('data-stream-id');
+                        
+                        try {
+                            const result = await ApiService.stopStream(streamId);
+                            
+                            if (result.success) {
+                                VideoManager.stopStream();
+                                showPage('cameras-page');
+                                UIManager.loadStreams();
+                                alert('Stream stopped successfully!');
+                            }
+                        } catch (error) {
+                            alert('Error stopping stream: ' + error.message);
+                        }
+                    }
+                    
+                    // Watch stream
+                    if (e.target.closest('.watch-stream-btn')) {
+                        const button = e.target.closest('.watch-stream-btn');
+                        const streamId = button.getAttribute('data-stream-id');
+                        const streamName = button.getAttribute('data-stream-name');
+                        
+                        try {
+                            document.getElementById('stream-viewer-title').textContent = `Watching: ${streamName}`;
+                            showPage('stream-viewer-page');
+                            
+                            // Start watching the stream
+                            await VideoManager.watchStream(streamId);
+                        } catch (error) {
+                            alert('Error joining video stream: ' + error.message);
+                            showPage('streams-page');
+                        }
+                    }
+                    
+                    // Delete camera
+                    if (e.target.closest('.delete-camera-btn')) {
+                        const button = e.target.closest('.delete-camera-btn');
+                        const cameraId = button.getAttribute('data-camera-id');
+                        const cameraName = button.getAttribute('data-camera-name');
+                        
+                        if (confirm(`Are you sure you want to delete camera "${cameraName}"? This will also stop any active streams.`)) {
+                            try {
+                                const result = await ApiService.deleteCamera(cameraId);
+                                
+                                if (result.success) {
+                                    alert('Camera deleted successfully!');
+                                    UIManager.loadCameras();
+                                    UIManager.loadStreams();
+                                }
+                            } catch (error) {
+                                alert('Error deleting camera: ' + error.message);
+                            }
+                        }
                     }
                 });
 
-                // Back to cameras from live view
-                document.getElementById('back-to-cameras').addEventListener('click', () => {
-                    CameraManager.stopCamera(
-                        document.getElementById('camera-feed'),
-                        document.getElementById('camera-placeholder')
-                    );
-                    toggleCameraButtons(false);
-                    CameraManager.currentCamera = null;
-                    showPage('cameras-page');
+                // Stop broadcast button
+                document.getElementById('stop-broadcast-btn').addEventListener('click', async () => {
+                    if (currentStreamId) {
+                        try {
+                            const result = await ApiService.stopStream(currentStreamId);
+                            if (result.success) {
+                                VideoManager.stopStream();
+                                showPage('cameras-page');
+                                UIManager.loadStreams();
+                                alert('Broadcast stopped successfully!');
+                            }
+                        } catch (error) {
+                            alert('Error stopping broadcast: ' + error.message);
+                        }
+                    } else {
+                        VideoManager.stopStream();
+                        showPage('cameras-page');
+                    }
+                });
+
+                // Stop watching button
+                document.getElementById('stop-watching-btn').addEventListener('click', () => {
+                    VideoManager.stopStream();
+                    showPage('streams-page');
                 });
             }
         };
@@ -1564,32 +1674,6 @@
 
         function hideAlert(alertId) {
             document.getElementById(alertId).classList.add('hidden');
-        }
-
-        function toggleCameraButtons(isStreaming) {
-            const startBtn = document.getElementById('start-live-camera');
-            const stopBtn = document.getElementById('stop-live-camera');
-            
-            if (isStreaming) {
-                startBtn.classList.add('hidden');
-                stopBtn.classList.remove('hidden');
-            } else {
-                startBtn.classList.remove('hidden');
-                stopBtn.classList.add('hidden');
-            }
-        }
-
-        function toggleSetupCameraButtons(isStreaming) {
-            const startBtn = document.getElementById('start-camera-btn');
-            const stopBtn = document.getElementById('stop-camera-btn');
-            
-            if (isStreaming) {
-                startBtn.classList.add('hidden');
-                stopBtn.classList.remove('hidden');
-            } else {
-                startBtn.classList.remove('hidden');
-                stopBtn.classList.add('hidden');
-            }
         }
 
         // Initialize the app

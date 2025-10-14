@@ -1557,89 +1557,111 @@ const VideoManager = {
                     }
                 });
 
-                // Dynamic button handlers
-                document.addEventListener('click', async (e) => {
-                    // Start streaming
-                    if (e.target.closest('.start-stream-btn')) {
-                        const button = e.target.closest('.start-stream-btn');
-                        const cameraId = button.getAttribute('data-camera-id');
-                        const cameraName = button.getAttribute('data-camera-name');
-                        
-                        try {
-                            const result = await ApiService.startStream(cameraId, cameraName);
-                            
-                            if (result.success) {
-                                // Switch to broadcaster page
-                                document.getElementById('broadcast-camera-name').textContent = cameraName;
-                                showPage('stream-broadcaster-page');
-                                
-                                // Start the video broadcast
-                                await VideoManager.startBroadcast(result.streamInfo);
-                                alert('You are now broadcasting live! Other devices can watch your stream.');
-                            }
-                        } catch (error) {
-                            alert('Error starting video stream: ' + error.message);
-                        }
+                // Dynamic button handlers - IMPROVED VERSION
+document.addEventListener('click', async (e) => {
+    // Start streaming
+    if (e.target.closest('.start-stream-btn')) {
+        const button = e.target.closest('.start-stream-btn');
+        const cameraId = button.getAttribute('data-camera-id');
+        const cameraName = button.getAttribute('data-camera-name');
+        
+        try {
+            console.log('Starting stream for camera:', cameraId);
+            const result = await ApiService.startStream(cameraId, cameraName);
+            
+            if (result.success) {
+                console.log('Stream started successfully, switching to broadcaster page');
+                // Switch to broadcaster page
+                document.getElementById('broadcast-camera-name').textContent = cameraName;
+                showPage('stream-broadcaster-page');
+                
+                // Wait a moment for DOM to update, then start the video broadcast
+                setTimeout(async () => {
+                    try {
+                        await VideoManager.startBroadcast(result.streamInfo);
+                        console.log('Video broadcast started successfully');
+                    } catch (videoError) {
+                        console.error('Failed to start video broadcast:', videoError);
+                        alert('Failed to start video: ' + videoError.message);
+                        showPage('cameras-page');
                     }
-                    
-                    // Stop streaming
-                    if (e.target.closest('.stop-stream-btn')) {
-                        const button = e.target.closest('.stop-stream-btn');
-                        const streamId = button.getAttribute('data-stream-id');
-                        
-                        try {
-                            const result = await ApiService.stopStream(streamId);
-                            
-                            if (result.success) {
-                                VideoManager.stopStream();
-                                showPage('cameras-page');
-                                UIManager.loadStreams();
-                                alert('Stream stopped successfully!');
-                            }
-                        } catch (error) {
-                            alert('Error stopping stream: ' + error.message);
-                        }
-                    }
-                    
-                    // Watch stream
-                    if (e.target.closest('.watch-stream-btn')) {
-                        const button = e.target.closest('.watch-stream-btn');
-                        const streamId = button.getAttribute('data-stream-id');
-                        const streamName = button.getAttribute('data-stream-name');
-                        
-                        try {
-                            document.getElementById('stream-viewer-title').textContent = `Watching: ${streamName}`;
-                            showPage('stream-viewer-page');
-                            
-                            // Start watching the stream
-                            await VideoManager.watchStream(streamId);
-                        } catch (error) {
-                            alert('Error joining video stream: ' + error.message);
-                            showPage('streams-page');
-                        }
-                    }
-                    
-                    // Delete camera
-                    if (e.target.closest('.delete-camera-btn')) {
-                        const button = e.target.closest('.delete-camera-btn');
-                        const cameraId = button.getAttribute('data-camera-id');
-                        const cameraName = button.getAttribute('data-camera-name');
-                        
-                        if (confirm(`Are you sure you want to delete camera "${cameraName}"? This will also stop any active streams.`)) {
-                            try {
-                                const result = await ApiService.deleteCamera(cameraId);
-                                
-                                if (result.success) {
-                                    alert('Camera deleted successfully!');
-                                    UIManager.loadCameras();
-                                    UIManager.loadStreams();
-                                }
-                            } catch (error) {
-                                alert('Error deleting camera: ' + error.message);
-                            }
-                        }
-                    }
-                });
+                }, 100);
+            }
+        } catch (error) {
+            console.error('Error starting video stream:', error);
+            alert('Error starting video stream: ' + error.message);
+        }
+    }
+    
+    // Stop streaming
+    if (e.target.closest('.stop-stream-btn')) {
+        const button = e.target.closest('.stop-stream-btn');
+        const streamId = button.getAttribute('data-stream-id');
+        
+        try {
+            const result = await ApiService.stopStream(streamId);
+            
+            if (result.success) {
+                VideoManager.stopStream();
+                showPage('cameras-page');
+                UIManager.loadStreams();
+                alert('Stream stopped successfully!');
+            }
+        } catch (error) {
+            alert('Error stopping stream: ' + error.message);
+        }
+    }
+    
+    // Watch stream
+    if (e.target.closest('.watch-stream-btn')) {
+        const button = e.target.closest('.watch-stream-btn');
+        const streamId = button.getAttribute('data-stream-id');
+        const streamName = button.getAttribute('data-stream-name');
+        
+        try {
+            console.log('Watching stream:', streamId);
+            document.getElementById('stream-viewer-title').textContent = `Watching: ${streamName}`;
+            showPage('stream-viewer-page');
+            
+            // Wait a moment for DOM to update, then start watching
+            setTimeout(async () => {
+                try {
+                    await VideoManager.watchStream(streamId);
+                    console.log('Stream watching started successfully');
+                } catch (videoError) {
+                    console.error('Failed to watch stream:', videoError);
+                    alert('Failed to join stream: ' + videoError.message);
+                    showPage('streams-page');
+                }
+            }, 100);
+        } catch (error) {
+            console.error('Error joining video stream:', error);
+            alert('Error joining video stream: ' + error.message);
+            showPage('streams-page');
+        }
+    }
+    
+    // Delete camera
+    if (e.target.closest('.delete-camera-btn')) {
+        const button = e.target.closest('.delete-camera-btn');
+        const cameraId = button.getAttribute('data-camera-id');
+        const cameraName = button.getAttribute('data-camera-name');
+        
+        if (confirm(`Are you sure you want to delete camera "${cameraName}"? This will also stop any active streams.`)) {
+            try {
+                const result = await ApiService.deleteCamera(cameraId);
+                
+                if (result.success) {
+                    alert('Camera deleted successfully!');
+                    UIManager.loadCameras();
+                    UIManager.loadStreams();
+                }
+            } catch (error) {
+                alert('Error deleting camera: ' + error.message);
+            }
+        }
+    }
+});
 
                 // Stop broadcast button
                 document.getElementById('stop-broadcast-btn').addEventListener('click', async () => {

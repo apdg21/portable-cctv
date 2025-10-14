@@ -1054,115 +1054,139 @@
             }
         };
 
-        // Daily.co Video Manager
-        const VideoManager = {
-            // Start broadcasting (as streamer)
-            async startBroadcast(streamInfo) {
-                try {
-                    if (!window.DailyIframe) {
-                        throw new Error('Daily.co SDK not loaded');
-                    }
-
-                    // Create call frame for broadcasting
-                    dailyCallFrame = window.DailyIframe.createFrame({
-                        url: streamInfo.url,
-                        token: streamInfo.ownerToken,
-                        showLeaveButton: false,
-                        showFullscreenButton: true,
-                        iframeStyle: {
-                            position: 'absolute',
-                            top: '0',
-                            left: '0',
-                            width: '100%',
-                            height: '100%',
-                            border: 'none',
-                            borderRadius: '8px'
-                        }
-                    });
-
-                    // Add to broadcast container
-                    const container = document.getElementById('broadcast-container');
-                    container.innerHTML = '';
-                    container.appendChild(dailyCallFrame);
-
-                    // Join the call as broadcaster
-                    await dailyCallFrame.join({
-                        user_name: `Broadcaster-${currentUser.name}`,
-                        startVideoOff: false,
-                        startAudioOff: true
-                    });
-
-                    currentStreamId = streamInfo.id;
-                    console.log('Started broadcasting:', streamInfo.id);
-                    return true;
-                } catch (error) {
-                    console.error('Error starting broadcast:', error);
-                    throw error;
-                }
-            },
-
-            // Watch stream (as viewer)
-            async watchStream(streamId) {
-                try {
-                    // Get viewer token
-                    const tokenResponse = await ApiService.getStreamToken(streamId);
-                    
-                    if (!tokenResponse.success) {
-                        throw new Error('Failed to get stream token');
-                    }
-
-                    if (!window.DailyIframe) {
-                        throw new Error('Daily.co SDK not loaded');
-                    }
-
-                    // Create call frame for viewing
-                    dailyCallFrame = window.DailyIframe.createFrame({
-                        url: tokenResponse.url,
-                        token: tokenResponse.token,
-                        showLeaveButton: true,
-                        showFullscreenButton: true,
-                        iframeStyle: {
-                            position: 'absolute',
-                            top: '0',
-                            left: '0',
-                            width: '100%',
-                            height: '100%',
-                            border: 'none',
-                            borderRadius: '8px'
-                        }
-                    });
-
-                    // Add to viewer container
-                    const container = document.getElementById('stream-viewer-container');
-                    container.innerHTML = '';
-                    container.appendChild(dailyCallFrame);
-
-                    // Join as viewer
-                    await dailyCallFrame.join({
-                        user_name: `Viewer-${currentUser.name}`,
-                        startVideoOff: false,
-                        startAudioOff: true
-                    });
-
-                    currentStreamId = streamId;
-                    console.log('Joined stream as viewer:', streamId);
-                    return true;
-                } catch (error) {
-                    console.error('Error watching stream:', error);
-                    throw error;
-                }
-            },
-
-            // Stop video stream
-            stopStream() {
-                if (dailyCallFrame) {
-                    dailyCallFrame.leave();
-                    dailyCallFrame.destroy();
-                    dailyCallFrame = null;
-                }
-                currentStreamId = null;
+        // Daily.co Video Manager - FIXED VERSION
+const VideoManager = {
+    // Start broadcasting (as streamer)
+    async startBroadcast(streamInfo) {
+        try {
+            if (!window.DailyIframe) {
+                throw new Error('Daily.co SDK not loaded');
             }
-        };
+
+            console.log('Starting broadcast with stream info:', streamInfo);
+
+            // Create call frame for broadcasting
+            dailyCallFrame = window.DailyIframe.createFrame({
+                url: streamInfo.url,
+                token: streamInfo.ownerToken,
+                showLeaveButton: false,
+                showFullscreenButton: true,
+                iframeStyle: {
+                    position: 'absolute',
+                    top: '0',
+                    left: '0',
+                    width: '100%',
+                    height: '100%',
+                    border: 'none',
+                    borderRadius: '8px'
+                }
+            });
+
+            // Create a container div for the iframe
+            const iframeContainer = document.createElement('div');
+            iframeContainer.style.width = '100%';
+            iframeContainer.style.height = '100%';
+            iframeContainer.style.position = 'relative';
+            iframeContainer.appendChild(dailyCallFrame);
+
+            // Add to broadcast container
+            const container = document.getElementById('broadcast-container');
+            container.innerHTML = '';
+            container.appendChild(iframeContainer);
+
+            // Join the call as broadcaster
+            await dailyCallFrame.join({
+                user_name: `Broadcaster-${currentUser.name}`,
+                startVideoOff: false,
+                startAudioOff: true
+            });
+
+            currentStreamId = streamInfo.id;
+            console.log('Started broadcasting:', streamInfo.id);
+            return true;
+        } catch (error) {
+            console.error('Error starting broadcast:', error);
+            throw error;
+        }
+    },
+
+    // Watch stream (as viewer)
+    async watchStream(streamId) {
+        try {
+            console.log('Getting stream token for:', streamId);
+            
+            // Get viewer token
+            const tokenResponse = await ApiService.getStreamToken(streamId);
+            
+            if (!tokenResponse.success) {
+                throw new Error('Failed to get stream token');
+            }
+
+            if (!window.DailyIframe) {
+                throw new Error('Daily.co SDK not loaded');
+            }
+
+            console.log('Creating viewer frame for:', tokenResponse.url);
+
+            // Create call frame for viewing
+            dailyCallFrame = window.DailyIframe.createFrame({
+                url: tokenResponse.url,
+                token: tokenResponse.token,
+                showLeaveButton: true,
+                showFullscreenButton: true,
+                iframeStyle: {
+                    position: 'absolute',
+                    top: '0',
+                    left: '0',
+                    width: '100%',
+                    height: '100%',
+                    border: 'none',
+                    borderRadius: '8px'
+                }
+            });
+
+            // Create a container div for the iframe
+            const iframeContainer = document.createElement('div');
+            iframeContainer.style.width = '100%';
+            iframeContainer.style.height = '100%';
+            iframeContainer.style.position = 'relative';
+            iframeContainer.appendChild(dailyCallFrame);
+
+            // Add to viewer container
+            const container = document.getElementById('stream-viewer-container');
+            container.innerHTML = '';
+            container.appendChild(iframeContainer);
+
+            // Join as viewer
+            await dailyCallFrame.join({
+                user_name: `Viewer-${currentUser.name}`,
+                startVideoOff: false,
+                startAudioOff: true
+            });
+
+            currentStreamId = streamId;
+            console.log('Joined stream as viewer:', streamId);
+            return true;
+        } catch (error) {
+            console.error('Error watching stream:', error);
+            throw error;
+        }
+    },
+
+    // Stop video stream
+    stopStream() {
+        if (dailyCallFrame) {
+            try {
+                dailyCallFrame.leave();
+                dailyCallFrame.destroy();
+            } catch (error) {
+                console.log('Error stopping stream (may already be stopped):', error);
+            }
+            dailyCallFrame = null;
+        }
+        currentStreamId = null;
+    }
+};
 
         // UI Manager
         const UIManager = {

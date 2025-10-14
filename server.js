@@ -262,9 +262,8 @@ app.post('/api/streams/start', authenticateToken, async (req, res) => {
     
     console.log('Creating Daily.co room:', roomName);
     
-    // Create room in Daily.co
+    // Create room in Daily.co (REMOVED enable_recording)
     const room = await DailyService.createRoom(roomName, {
-      enable_recording: 'cloud',
       enable_advanced_chat: false
     });
 

@@ -390,6 +390,7 @@
             gap: 10px;
             justify-content: center;
             margin-top: 1rem;
+            flex-wrap: wrap;
         }
         
         /* Streaming Info */
@@ -450,6 +451,10 @@
             nav ul {
                 flex-wrap: wrap;
                 justify-content: center;
+            }
+            
+            .setup-controls {
+                flex-direction: column;
             }
         }
         
@@ -520,6 +525,28 @@
         .status-offline {
             color: var(--danger);
         }
+        
+        .loading {
+            opacity: 0.7;
+            pointer-events: none;
+        }
+        
+        .api-status {
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            margin-left: 10px;
+        }
+        
+        .api-status.connected {
+            background: var(--success);
+            color: white;
+        }
+        
+        .api-status.disconnected {
+            background: var(--danger);
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -529,6 +556,7 @@
             <div class="logo">
                 <i class="fas fa-video"></i>
                 <span>SecureCam Pro</span>
+                <span id="api-status" class="api-status disconnected">API Offline</span>
             </div>
             <nav>
                 <ul>
@@ -576,7 +604,7 @@
             
             <!-- Demo Credentials -->
             <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 4px; font-size: 0.9rem;">
-                <p style="margin-bottom: 8px; font-weight: 600;">Demo Credentials:</p>
+                <p style="margin-bottom: 8px; font-weight: 600;">Demo Account:</p>
                 <p>Email: demo@securecam.com</p>
                 <p>Password: password123</p>
             </div>
@@ -634,7 +662,7 @@
                         <i class="fas fa-video"></i>
                     </div>
                     <div class="stat-info">
-                        <h3 id="active-cameras-count">3</h3>
+                        <h3 id="active-cameras-count">0</h3>
                         <p>Active Cameras</p>
                     </div>
                 </div>
@@ -643,7 +671,7 @@
                         <i class="fas fa-calendar-check"></i>
                     </div>
                     <div class="stat-info">
-                        <h3 id="events-today">12</h3>
+                        <h3 id="events-today">0</h3>
                         <p>Events Today</p>
                     </div>
                 </div>
@@ -652,33 +680,16 @@
                         <i class="fas fa-clock"></i>
                     </div>
                     <div class="stat-info">
-                        <h3 id="total-hours">47</h3>
+                        <h3 id="total-hours">0</h3>
                         <p>Total Hours Recorded</p>
                     </div>
                 </div>
             </div>
             
             <h2 style="margin: 2rem 0 1rem;">Recent Events</h2>
-            <div class="events-panel">
+            <div class="events-panel" id="recent-events">
                 <div class="event-item">
-                    <h4>Motion Detected</h4>
-                    <p>Front Door Camera detected motion</p>
-                    <div class="event-time">2 minutes ago</div>
-                </div>
-                <div class="event-item">
-                    <h4>Camera Offline</h4>
-                    <p>Backyard Camera lost connection</p>
-                    <div class="event-time">15 minutes ago</div>
-                </div>
-                <div class="event-item">
-                    <h4>Motion Detected</h4>
-                    <p>Driveway Camera detected motion</p>
-                    <div class="event-time">1 hour ago</div>
-                </div>
-                <div class="event-item">
-                    <h4>New Camera Added</h4>
-                    <p>Garage Camera was added to your account</p>
-                    <div class="event-time">3 hours ago</div>
+                    <p>No events yet. Events will appear here when cameras detect motion.</p>
                 </div>
             </div>
         </div>
@@ -697,73 +708,19 @@
                 <p>All your cameras can be accessed from any device. Click 'View' to watch live streams from anywhere.</p>
             </div>
             
-            <div class="cameras-grid">
-                <div class="camera-card">
-                    <div class="camera-preview live">
-                        <i class="fas fa-video fa-3x"></i>
-                        <div class="device-status" style="position: absolute; bottom: 10px; left: 10px;">
-                            <i class="fas fa-circle status-online"></i>
-                            <span>Streaming Online</span>
-                        </div>
-                    </div>
-                    <div class="camera-info">
-                        <h3>Front Door</h3>
-                        <p>Location: Main Entrance</p>
-                        <p>Stream ID: CAM-001</p>
-                        <div class="camera-actions">
-                            <button class="btn btn-primary btn-sm view-camera-btn" data-camera="front-door">
-                                <i class="fas fa-eye"></i> View Live
-                            </button>
-                            <button class="btn btn-outline btn-sm">
-                                <i class="fas fa-cog"></i> Settings
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                
+            <div class="cameras-grid" id="cameras-list">
+                <!-- Cameras will be loaded here dynamically -->
                 <div class="camera-card">
                     <div class="camera-preview">
                         <i class="fas fa-video fa-3x"></i>
                         <div class="device-status" style="position: absolute; bottom: 10px; left: 10px;">
                             <i class="fas fa-circle status-offline"></i>
-                            <span>Offline</span>
+                            <span>No cameras yet</span>
                         </div>
                     </div>
                     <div class="camera-info">
-                        <h3>Backyard</h3>
-                        <p>Location: Garden Area</p>
-                        <p>Stream ID: CAM-002</p>
-                        <div class="camera-actions">
-                            <button class="btn btn-primary btn-sm" disabled>
-                                <i class="fas fa-eye"></i> View Live
-                            </button>
-                            <button class="btn btn-outline btn-sm">
-                                <i class="fas fa-cog"></i> Settings
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="camera-card">
-                    <div class="camera-preview live">
-                        <i class="fas fa-video fa-3x"></i>
-                        <div class="device-status" style="position: absolute; bottom: 10px; left: 10px;">
-                            <i class="fas fa-circle status-online"></i>
-                            <span>Streaming Online</span>
-                        </div>
-                    </div>
-                    <div class="camera-info">
-                        <h3>Driveway</h3>
-                        <p>Location: Parking Area</p>
-                        <p>Stream ID: CAM-003</p>
-                        <div class="camera-actions">
-                            <button class="btn btn-primary btn-sm view-camera-btn" data-camera="driveway">
-                                <i class="fas fa-eye"></i> View Live
-                            </button>
-                            <button class="btn btn-outline btn-sm">
-                                <i class="fas fa-cog"></i> Settings
-                            </button>
-                        </div>
+                        <h3>No Cameras</h3>
+                        <p>Click "Add Camera" to get started</p>
                     </div>
                 </div>
             </div>
@@ -825,8 +782,8 @@
                     <button class="btn btn-success" id="capture-snapshot-btn">
                         <i class="fas fa-camera"></i> Take Snapshot
                     </button>
-                    <button class="btn btn-primary" id="start-streaming-btn">
-                        <i class="fas fa-cloud-upload-alt"></i> Start Cloud Stream
+                    <button class="btn btn-primary" id="save-camera-btn">
+                        <i class="fas fa-save"></i> Save Camera
                     </button>
                 </div>
                 
@@ -841,7 +798,7 @@
         <!-- Live View Page -->
         <div id="live-view-page" class="hidden">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
-                <h1 class="page-title"><i class="fas fa-eye"></i> Live View - <span id="camera-name">Front Door</span></h1>
+                <h1 class="page-title"><i class="fas fa-eye"></i> Live View - <span id="camera-name">Camera</span></h1>
                 <button class="btn btn-outline" id="back-to-cameras">
                     <i class="fas fa-arrow-left"></i> Back to Cameras
                 </button>
@@ -869,8 +826,8 @@
                         <button class="btn btn-outline" style="color: white; border-color: white;" id="take-snapshot">
                             <i class="fas fa-camera"></i> Snapshot
                         </button>
-                        <button class="btn btn-outline" style="color: white; border-color: white;">
-                            <i class="fas fa-record-vinyl"></i> Record
+                        <button class="btn btn-outline" style="color: white; border-color: white;" id="record-event-btn">
+                            <i class="fas fa-record-vinyl"></i> Record Event
                         </button>
                     </div>
                 </div>
@@ -888,14 +845,9 @@
                         <div class="event-time">Latency: <span id="stream-latency">--</span> ms</div>
                     </div>
                     <div class="event-item">
-                        <h4>Recent Events</h4>
-                        <p>Motion detected in frame</p>
-                        <div class="event-time">2 minutes ago</div>
-                    </div>
-                    <div class="event-item">
-                        <h4>Cloud Storage</h4>
-                        <p>Recording to cloud storage</p>
-                        <div class="event-time">Active</div>
+                        <h4>Camera Events</h4>
+                        <p id="camera-events-count">No events recorded</p>
+                        <div class="event-time" id="last-event-time">--</div>
                     </div>
                 </div>
             </div>
@@ -906,31 +858,9 @@
         <!-- Events Page -->
         <div id="events-page" class="hidden">
             <h1 class="page-title"><i class="fas fa-list-alt"></i> Event History</h1>
-            <div class="events-panel">
+            <div class="events-panel" id="events-list">
                 <div class="event-item">
-                    <h4>Motion Detected - Front Door</h4>
-                    <p>Person detected approaching the door</p>
-                    <div class="event-time">Today, 10:23 AM</div>
-                </div>
-                <div class="event-item">
-                    <h4>Camera Offline - Backyard</h4>
-                    <p>Camera lost connection to the network</p>
-                    <div class="event-time">Today, 09:45 AM</div>
-                </div>
-                <div class="event-item">
-                    <h4>Motion Detected - Driveway</h4>
-                    <p>Vehicle detected entering the driveway</p>
-                    <div class="event-time">Yesterday, 08:15 PM</div>
-                </div>
-                <div class="event-item">
-                    <h4>New Camera Added - Garage</h4>
-                    <p>New camera was successfully configured</p>
-                    <div class="event-time">June 15, 2023, 03:30 PM</div>
-                </div>
-                <div class="event-item">
-                    <h4>Motion Detected - Front Door</h4>
-                    <p>Package delivery detected</p>
-                    <div class="event-time">June 14, 2023, 02:15 PM</div>
+                    <p>Loading events...</p>
                 </div>
             </div>
         </div>
@@ -1008,76 +938,101 @@
     </footer>
 
     <script>
-        // Simple user management (using localStorage for demo purposes)
-        const UserManager = {
-            // Demo user for testing
-            demoUser: {
-                email: 'demo@securecam.com',
-                password: 'password123',
-                name: 'Demo User'
-            },
-            
-            // Initialize users in localStorage
-            init: function() {
-                if (!localStorage.getItem('securecam_users')) {
-                    const users = [this.demoUser];
-                    localStorage.setItem('securecam_users', JSON.stringify(users));
+        // API Configuration - UPDATE THIS WITH YOUR RENDER URL
+        const API_BASE_URL = 'https://your-app-name.onrender.com'; // Change this to your actual Render URL
+        let currentUser = null;
+        let authToken = null;
+
+        // API Service
+        const ApiService = {
+            async request(endpoint, options = {}) {
+                const url = `${API_BASE_URL}${endpoint}`;
+                const config = {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...options.headers
+                    },
+                    ...options
+                };
+
+                if (authToken) {
+                    config.headers['Authorization'] = `Bearer ${authToken}`;
+                }
+
+                try {
+                    const response = await fetch(url, config);
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.error || 'API request failed');
+                    }
+                    
+                    return data;
+                } catch (error) {
+                    console.error('API Request failed:', error);
+                    throw error;
                 }
             },
-            
-            // Register a new user
-            register: function(name, email, password) {
-                const users = JSON.parse(localStorage.getItem('securecam_users'));
-                
-                // Check if user already exists
-                if (users.find(user => user.email === email)) {
-                    return { success: false, message: 'User with this email already exists' };
-                }
-                
-                // Add new user
-                const newUser = { name, email, password };
-                users.push(newUser);
-                localStorage.setItem('securecam_users', JSON.stringify(users));
-                
-                return { success: true, message: 'Registration successful' };
-            },
-            
-            // Login user
-            login: function(email, password) {
-                const users = JSON.parse(localStorage.getItem('securecam_users'));
-                const user = users.find(user => user.email === email && user.password === password);
-                
-                if (user) {
-                    // Store current user in session
-                    sessionStorage.setItem('securecam_current_user', JSON.stringify(user));
-                    return { success: true, user };
-                } else {
-                    return { success: false, message: 'Invalid email or password' };
+
+            async healthCheck() {
+                try {
+                    await this.request('/api/health');
+                    return true;
+                } catch (error) {
+                    return false;
                 }
             },
-            
-            // Get current user
-            getCurrentUser: function() {
-                const userStr = sessionStorage.getItem('securecam_current_user');
-                return userStr ? JSON.parse(userStr) : null;
+
+            async register(userData) {
+                return await this.request('/api/register', {
+                    method: 'POST',
+                    body: JSON.stringify(userData)
+                });
             },
-            
-            // Logout user
-            logout: function() {
-                sessionStorage.removeItem('securecam_current_user');
+
+            async login(credentials) {
+                return await this.request('/api/login', {
+                    method: 'POST',
+                    body: JSON.stringify(credentials)
+                });
+            },
+
+            async getCameras() {
+                return await this.request('/api/cameras');
+            },
+
+            async createCamera(cameraData) {
+                return await this.request('/api/cameras', {
+                    method: 'POST',
+                    body: JSON.stringify(cameraData)
+                });
+            },
+
+            async getEvents() {
+                return await this.request('/api/events');
+            },
+
+            async createEvent(eventData) {
+                return await this.request('/api/events', {
+                    method: 'POST',
+                    body: JSON.stringify(eventData)
+                });
+            },
+
+            async initDatabase() {
+                return await this.request('/api/init', {
+                    method: 'POST'
+                });
             }
         };
 
-        // Camera and Streaming management
+        // Camera Manager
         const CameraManager = {
             stream: null,
-            streamingInterval: null,
-            streamStartTime: null,
-            
-            // Start camera stream
-            startCamera: async function(videoElement, placeholderElement) {
+            currentCamera: null,
+
+            async startCamera(videoElement, placeholderElement) {
                 try {
-                    // Request camera access
                     this.stream = await navigator.mediaDevices.getUserMedia({ 
                         video: { 
                             width: { ideal: 1280 },
@@ -1086,11 +1041,9 @@
                         audio: false 
                     });
                     
-                    // Set video source to the camera stream
                     videoElement.srcObject = this.stream;
                     videoElement.classList.remove('hidden');
                     
-                    // Hide placeholder
                     if (placeholderElement) {
                         placeholderElement.classList.add('hidden');
                     }
@@ -1104,17 +1057,11 @@
                     };
                 }
             },
-            
-            // Stop camera stream
-            stopCamera: function(videoElement, placeholderElement) {
+
+            stopCamera(videoElement, placeholderElement) {
                 if (this.stream) {
                     this.stream.getTracks().forEach(track => track.stop());
                     this.stream = null;
-                }
-                
-                if (this.streamingInterval) {
-                    clearInterval(this.streamingInterval);
-                    this.streamingInterval = null;
                 }
                 
                 if (videoElement) {
@@ -1126,61 +1073,8 @@
                     placeholderElement.classList.remove('hidden');
                 }
             },
-            
-            // Simulate cloud streaming
-            startCloudStreaming: function(cameraName, quality) {
-                return new Promise((resolve) => {
-                    // Simulate API call to cloud service
-                    setTimeout(() => {
-                        const streamId = 'CAM-' + Math.floor(100 + Math.random() * 900);
-                        this.streamStartTime = new Date();
-                        
-                        // Simulate streaming metrics
-                        this.streamingInterval = setInterval(() => {
-                            this.updateStreamMetrics();
-                        }, 2000);
-                        
-                        resolve({
-                            success: true,
-                            streamId: streamId,
-                            message: `Cloud streaming started for ${cameraName} at ${quality} quality`
-                        });
-                    }, 2000);
-                });
-            },
-            
-            // Update streaming metrics
-            updateStreamMetrics: function() {
-                if (this.streamStartTime) {
-                    const now = new Date();
-                    const uptime = Math.floor((now - this.streamStartTime) / 1000);
-                    const minutes = Math.floor(uptime / 60);
-                    const seconds = uptime % 60;
-                    
-                    document.getElementById('stream-uptime').textContent = 
-                        `Uptime: ${minutes}m ${seconds}s`;
-                    
-                    // Simulate latency
-                    const latency = Math.floor(50 + Math.random() * 100);
-                    document.getElementById('stream-latency').textContent = latency;
-                    
-                    // Update connection quality
-                    const qualityElement = document.getElementById('connection-quality');
-                    if (latency < 100) {
-                        qualityElement.textContent = 'Excellent';
-                        qualityElement.style.color = 'var(--success)';
-                    } else if (latency < 200) {
-                        qualityElement.textContent = 'Good';
-                        qualityElement.style.color = 'var(--warning)';
-                    } else {
-                        qualityElement.textContent = 'Fair';
-                        qualityElement.style.color = 'var(--danger)';
-                    }
-                }
-            },
-            
-            // Take snapshot from video stream
-            takeSnapshot: function(videoElement, containerElement) {
+
+            takeSnapshot(videoElement, containerElement) {
                 if (!videoElement.srcObject) {
                     alert('Please start the camera first');
                     return;
@@ -1189,366 +1083,518 @@
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
                 
-                // Set canvas dimensions to match video
                 canvas.width = videoElement.videoWidth;
                 canvas.height = videoElement.videoHeight;
                 
-                // Draw current video frame to canvas
                 context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
                 
-                // Create image from canvas
                 const snapshot = document.createElement('img');
                 snapshot.src = canvas.toDataURL('image/png');
                 snapshot.className = 'snapshot';
                 
-                // Add timestamp
                 const timestamp = new Date().toLocaleString();
                 snapshot.title = `Snapshot taken at ${timestamp}`;
                 
-                // Add to container
                 containerElement.prepend(snapshot);
                 
-                // Simulate cloud upload
-                this.simulateCloudUpload(snapshot.src);
+                // Log event if we have a current camera
+                if (this.currentCamera) {
+                    ApiService.createEvent({
+                        cameraId: this.currentCamera.id,
+                        type: 'snapshot',
+                        description: 'Manual snapshot taken'
+                    }).catch(console.error);
+                }
                 
                 return snapshot.src;
-            },
-            
-            // Simulate cloud upload
-            simulateCloudUpload: function(imageData) {
-                console.log('Uploading snapshot to cloud storage...');
-                // In a real app, this would upload to a cloud service
-            },
-            
-            // Log camera events
-            logEvent: function(title, description) {
-                console.log(`Camera Event: ${title} - ${description}`);
-                // In a real app, you would save this to a server
             }
         };
 
-        // Page navigation and app logic
-        document.addEventListener('DOMContentLoaded', function() {
-            // Initialize user management
-            UserManager.init();
-            
-            // Check if user is already logged in
-            const currentUser = UserManager.getCurrentUser();
-            if (currentUser) {
-                showApp();
-            } else {
-                showPage('login-page');
-            }
-            
-            // Navigation links
-            document.querySelectorAll('.nav-link').forEach(link => {
-                link.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    const page = this.getAttribute('data-page');
+        // UI Manager
+        const UIManager = {
+            async loadCameras() {
+                try {
+                    const response = await ApiService.getCameras();
+                    const camerasContainer = document.getElementById('cameras-list');
                     
-                    // Update active nav link
-                    document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
-                    this.classList.add('active');
-                    
-                    if (page === 'dashboard') {
-                        showPage('dashboard-page');
-                    } else if (page === 'cameras') {
-                        showPage('cameras-page');
-                    } else if (page === 'events') {
-                        showPage('events-page');
-                    } else if (page === 'settings') {
-                        showPage('settings-page');
+                    if (response.cameras.length === 0) {
+                        camerasContainer.innerHTML = `
+                            <div class="camera-card">
+                                <div class="camera-preview">
+                                    <i class="fas fa-video fa-3x"></i>
+                                    <div class="device-status" style="position: absolute; bottom: 10px; left: 10px;">
+                                        <i class="fas fa-circle status-offline"></i>
+                                        <span>No cameras yet</span>
+                                    </div>
+                                </div>
+                                <div class="camera-info">
+                                    <h3>No Cameras</h3>
+                                    <p>Click "Add Camera" to get started</p>
+                                </div>
+                            </div>
+                        `;
+                        return;
                     }
-                });
-            });
-            
-            // Auth navigation
-            document.getElementById('show-register').addEventListener('click', function(e) {
-                e.preventDefault();
-                showPage('register-page');
-                hideAlert('register-alert');
-                hideAlert('register-success');
-            });
-            
-            document.getElementById('show-login').addEventListener('click', function(e) {
-                e.preventDefault();
-                showPage('login-page');
-                hideAlert('login-alert');
-            });
-            
-            // Login form
-            document.getElementById('login-form').addEventListener('submit', function(e) {
-                e.preventDefault();
-                const email = document.getElementById('login-email').value;
-                const password = document.getElementById('login-password').value;
-                
-                const result = UserManager.login(email, password);
-                
-                if (result.success) {
-                    showApp();
-                } else {
-                    showAlert('login-alert', result.message);
-                }
-            });
-            
-            // Register form
-            document.getElementById('register-form').addEventListener('submit', function(e) {
-                e.preventDefault();
-                const name = document.getElementById('register-name').value;
-                const email = document.getElementById('register-email').value;
-                const password = document.getElementById('register-password').value;
-                const confirmPassword = document.getElementById('register-confirm').value;
-                
-                // Validate passwords match
-                if (password !== confirmPassword) {
-                    showAlert('register-alert', 'Passwords do not match');
-                    return;
-                }
-                
-                // Validate password length
-                if (password.length < 6) {
-                    showAlert('register-alert', 'Password must be at least 6 characters long');
-                    return;
-                }
-                
-                const result = UserManager.register(name, email, password);
-                
-                if (result.success) {
-                    showAlert('register-success', result.message);
-                    document.getElementById('register-form').reset();
                     
-                    // Auto redirect to login after 2 seconds
-                    setTimeout(() => {
-                        showPage('login-page');
-                    }, 2000);
-                } else {
-                    showAlert('register-alert', result.message);
+                    camerasContainer.innerHTML = response.cameras.map(camera => `
+                        <div class="camera-card">
+                            <div class="camera-preview ${camera.status === 'online' ? 'live' : ''}">
+                                <i class="fas fa-video fa-3x"></i>
+                                <div class="device-status" style="position: absolute; bottom: 10px; left: 10px;">
+                                    <i class="fas fa-circle ${camera.status === 'online' ? 'status-online' : 'status-offline'}"></i>
+                                    <span>${camera.status === 'online' ? 'Streaming Online' : 'Offline'}</span>
+                                </div>
+                            </div>
+                            <div class="camera-info">
+                                <h3>${camera.name}</h3>
+                                <p>Location: ${camera.location}</p>
+                                <p>Stream ID: ${camera.streamId}</p>
+                                <div class="camera-actions">
+                                    <button class="btn btn-primary btn-sm view-camera-btn" data-camera='${JSON.stringify(camera).replace(/'/g, "&apos;")}'>
+                                        <i class="fas fa-eye"></i> View Live
+                                    </button>
+                                    <button class="btn btn-outline btn-sm">
+                                        <i class="fas fa-cog"></i> Settings
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `).join('');
+                    
+                    // Update dashboard stats
+                    document.getElementById('active-cameras-count').textContent = 
+                        response.cameras.filter(cam => cam.status === 'online').length;
+                    document.getElementById('total-hours').textContent = response.cameras.length * 15; // Mock data
+                    
+                } catch (error) {
+                    console.error('Error loading cameras:', error);
+                    showAlert('Error loading cameras: ' + error.message);
                 }
-            });
-            
-            // Logout
-            document.getElementById('logout-btn').addEventListener('click', function() {
-                // Stop any active camera streams
-                CameraManager.stopCamera();
-                UserManager.logout();
+            },
+
+            async loadEvents() {
+                try {
+                    const response = await ApiService.getEvents();
+                    const eventsContainer = document.getElementById('events-list');
+                    const recentEventsContainer = document.getElementById('recent-events');
+                    
+                    const events = response.events || [];
+                    
+                    if (events.length === 0) {
+                        eventsContainer.innerHTML = '<div class="event-item"><p>No events recorded yet.</p></div>';
+                        recentEventsContainer.innerHTML = '<div class="event-item"><p>No events yet. Events will appear here when cameras detect motion.</p></div>';
+                        return;
+                    }
+                    
+                    // Show latest 5 events on dashboard
+                    const recentEvents = events.slice(0, 5);
+                    recentEventsContainer.innerHTML = recentEvents.map(event => `
+                        <div class="event-item">
+                            <h4>${event.type} - ${event.description}</h4>
+                            <p>Camera ID: ${event.cameraId}</p>
+                            <div class="event-time">${new Date(event.timestamp).toLocaleString()}</div>
+                        </div>
+                    `).join('');
+                    
+                    // Show all events on events page
+                    eventsContainer.innerHTML = events.map(event => `
+                        <div class="event-item">
+                            <h4>${event.type}</h4>
+                            <p>${event.description}</p>
+                            <div class="event-time">${new Date(event.timestamp).toLocaleString()}</div>
+                        </div>
+                    `).join('');
+                    
+                    document.getElementById('events-today').textContent = 
+                        events.filter(event => {
+                            const eventDate = new Date(event.timestamp);
+                            const today = new Date();
+                            return eventDate.toDateString() === today.toDateString();
+                        }).length;
+                        
+                } catch (error) {
+                    console.error('Error loading events:', error);
+                }
+            },
+
+            updateAPIStatus(connected) {
+                const statusElement = document.getElementById('api-status');
+                statusElement.textContent = connected ? 'API Online' : 'API Offline';
+                statusElement.className = `api-status ${connected ? 'connected' : 'disconnected'}`;
+            }
+        };
+
+        // Authentication and App State
+        const AppState = {
+            init() {
+                this.checkAuth();
+                this.setupEventListeners();
+                this.checkAPIHealth();
+                
+                // Check API health every 30 seconds
+                setInterval(() => this.checkAPIHealth(), 30000);
+            },
+
+            async checkAPIHealth() {
+                const isHealthy = await ApiService.healthCheck();
+                UIManager.updateAPIStatus(isHealthy);
+                return isHealthy;
+            },
+
+            checkAuth() {
+                const savedUser = localStorage.getItem('securecam_user');
+                const savedToken = localStorage.getItem('securecam_token');
+                
+                if (savedUser && savedToken) {
+                    currentUser = JSON.parse(savedUser);
+                    authToken = savedToken;
+                    this.showApp();
+                } else {
+                    this.showLogin();
+                }
+            },
+
+            showLogin() {
                 showPage('login-page');
                 updateNavVisibility(false);
-            });
-            
-            // Camera view buttons
-            document.querySelectorAll('.view-camera-btn').forEach(btn => {
-                btn.addEventListener('click', function() {
-                    const cameraName = this.getAttribute('data-camera');
-                    const displayName = cameraName === 'front-door' ? 'Front Door' : 'Driveway';
-                    const streamId = cameraName === 'front-door' ? 'CAM-001' : 'CAM-003';
-                    
-                    document.getElementById('camera-name').textContent = displayName;
-                    document.getElementById('stream-id').textContent = streamId;
-                    showPage('live-view-page');
-                });
-            });
-            
-            // Back to cameras from live view
-            document.getElementById('back-to-cameras').addEventListener('click', function() {
-                // Stop camera when leaving live view
-                CameraManager.stopCamera(
-                    document.getElementById('camera-feed'),
-                    document.getElementById('camera-placeholder')
-                );
-                toggleCameraButtons(false);
-                showPage('cameras-page');
-            });
-            
-            // Add camera button
-            document.getElementById('add-camera-btn').addEventListener('click', function() {
-                showPage('camera-setup-page');
-            });
-            
-            // Back to cameras from setup
-            document.getElementById('back-to-cameras-from-setup').addEventListener('click', function() {
-                // Stop camera when leaving setup
-                CameraManager.stopCamera(
-                    document.getElementById('setup-camera-feed'),
-                    document.getElementById('setup-camera-placeholder')
-                );
-                toggleSetupCameraButtons(false);
-                document.getElementById('streaming-status').classList.add('hidden');
-                showPage('cameras-page');
-            });
-            
-            // Start camera in setup
-            document.getElementById('start-camera-btn').addEventListener('click', async function() {
-                const result = await CameraManager.startCamera(
-                    document.getElementById('setup-camera-feed'),
-                    document.getElementById('setup-camera-placeholder')
-                );
-                
-                if (result.success) {
-                    toggleSetupCameraButtons(true);
-                } else {
-                    alert(result.message);
-                }
-            });
-            
-            // Stop camera in setup
-            document.getElementById('stop-camera-btn').addEventListener('click', function() {
-                CameraManager.stopCamera(
-                    document.getElementById('setup-camera-feed'),
-                    document.getElementById('setup-camera-placeholder')
-                );
-                toggleSetupCameraButtons(false);
-            });
-            
-            // Capture snapshot in setup
-            document.getElementById('capture-snapshot-btn').addEventListener('click', function() {
-                CameraManager.takeSnapshot(
-                    document.getElementById('setup-camera-feed'),
-                    document.getElementById('snapshots-container')
-                );
-            });
-            
-            // Start cloud streaming
-            document.getElementById('start-streaming-btn').addEventListener('click', async function() {
-                const cameraName = document.getElementById('camera-name').value;
-                const location = document.getElementById('camera-location').value;
-                const quality = document.getElementById('stream-quality').value;
-                
-                if (!cameraName || !location) {
-                    alert('Please enter a camera name and location');
+            },
+
+            showApp() {
+                if (!currentUser) {
+                    this.showLogin();
                     return;
                 }
                 
-                // Show streaming status
-                const statusElement = document.getElementById('streaming-status');
-                statusElement.classList.remove('hidden');
-                statusElement.innerHTML = '<i class="fas fa-sync fa-spin"></i> Connecting to cloud streaming service...';
-                
-                // Simulate cloud streaming setup
-                const result = await CameraManager.startCloudStreaming(cameraName, quality);
-                
-                if (result.success) {
-                    statusElement.innerHTML = `<i class="fas fa-check-circle"></i> ${result.message}. Stream ID: ${result.streamId}`;
-                    statusElement.className = 'alert alert-success';
-                    
-                    // Auto redirect after success
-                    setTimeout(() => {
-                        document.getElementById('camera-name').value = '';
-                        document.getElementById('camera-location').value = '';
-                        document.getElementById('snapshots-container').innerHTML = '';
-                        
-                        CameraManager.stopCamera(
-                            document.getElementById('setup-camera-feed'),
-                            document.getElementById('setup-camera-placeholder')
-                        );
-                        toggleSetupCameraButtons(false);
-                        statusElement.classList.add('hidden');
-                        
-                        showPage('cameras-page');
-                    }, 3000);
-                }
-            });
-            
-            // Start camera in live view
-            document.getElementById('start-live-camera').addEventListener('click', async function() {
-                const result = await CameraManager.startCamera(
-                    document.getElementById('camera-feed'),
-                    document.getElementById('camera-placeholder')
-                );
-                
-                if (result.success) {
-                    toggleCameraButtons(true);
-                    document.getElementById('stream-status').textContent = 'Streaming live to cloud';
-                    
-                    // Simulate cloud streaming
-                    CameraManager.startCloudStreaming('Live Camera', 'high');
-                } else {
-                    alert(result.message);
-                }
-            });
-            
-            // Stop camera in live view
-            document.getElementById('stop-live-camera').addEventListener('click', function() {
-                CameraManager.stopCamera(
-                    document.getElementById('camera-feed'),
-                    document.getElementById('camera-placeholder')
-                );
-                toggleCameraButtons(false);
-                document.getElementById('stream-status').textContent = 'Stream stopped';
-            });
-            
-            // Take snapshot in live view
-            document.getElementById('take-snapshot').addEventListener('click', function() {
-                CameraManager.takeSnapshot(
-                    document.getElementById('camera-feed'),
-                    document.getElementById('live-snapshots-container')
-                );
-            });
-            
-            function showPage(pageId) {
-                // Hide all pages
-                document.querySelectorAll('div[id$="-page"]').forEach(page => {
-                    page.classList.add('hidden');
-                });
-                
-                // Show the requested page
-                document.getElementById(pageId).classList.remove('hidden');
-            }
-            
-            function showApp() {
-                const user = UserManager.getCurrentUser();
-                document.getElementById('user-welcome').textContent = `Welcome, ${user.name}`;
+                document.getElementById('user-welcome').textContent = `Welcome, ${currentUser.name}`;
                 showPage('dashboard-page');
                 updateNavVisibility(true);
-            }
-            
-            function updateNavVisibility(isLoggedIn) {
-                const nav = document.querySelector('nav');
-                const userActions = document.querySelector('.user-actions');
                 
-                if (isLoggedIn) {
-                    nav.style.display = 'block';
-                    userActions.style.display = 'flex';
-                } else {
-                    nav.style.display = 'none';
-                    userActions.style.display = 'none';
-                }
-            }
-            
-            function showAlert(alertId, message) {
-                const alert = document.getElementById(alertId);
-                alert.textContent = message;
-                alert.classList.remove('hidden');
-            }
-            
-            function hideAlert(alertId) {
-                document.getElementById(alertId).classList.add('hidden');
-            }
-            
-            function toggleCameraButtons(isStreaming) {
-                const startBtn = document.getElementById('start-live-camera');
-                const stopBtn = document.getElementById('stop-live-camera');
+                // Load initial data
+                UIManager.loadCameras();
+                UIManager.loadEvents();
+            },
+
+            setupEventListeners() {
+                // Auth navigation
+                document.getElementById('show-register').addEventListener('click', (e) => {
+                    e.preventDefault();
+                    showPage('register-page');
+                    hideAlert('register-alert');
+                    hideAlert('register-success');
+                });
                 
-                if (isStreaming) {
-                    startBtn.classList.add('hidden');
-                    stopBtn.classList.remove('hidden');
-                } else {
-                    startBtn.classList.remove('hidden');
-                    stopBtn.classList.add('hidden');
-                }
+                document.getElementById('show-login').addEventListener('click', (e) => {
+                    e.preventDefault();
+                    showPage('login-page');
+                    hideAlert('login-alert');
+                });
+
+                // Login form
+                document.getElementById('login-form').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const email = document.getElementById('login-email').value;
+                    const password = document.getElementById('login-password').value;
+                    
+                    try {
+                        const result = await ApiService.login({ email, password });
+                        
+                        if (result.success) {
+                            currentUser = result.user;
+                            authToken = result.token;
+                            
+                            localStorage.setItem('securecam_user', JSON.stringify(currentUser));
+                            localStorage.setItem('securecam_token', authToken);
+                            
+                            this.showApp();
+                        }
+                    } catch (error) {
+                        showAlert('login-alert', error.message);
+                    }
+                });
+
+                // Register form
+                document.getElementById('register-form').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const name = document.getElementById('register-name').value;
+                    const email = document.getElementById('register-email').value;
+                    const password = document.getElementById('register-password').value;
+                    const confirmPassword = document.getElementById('register-confirm').value;
+                    
+                    if (password !== confirmPassword) {
+                        showAlert('register-alert', 'Passwords do not match');
+                        return;
+                    }
+                    
+                    if (password.length < 6) {
+                        showAlert('register-alert', 'Password must be at least 6 characters long');
+                        return;
+                    }
+                    
+                    try {
+                        const result = await ApiService.register({ name, email, password });
+                        
+                        if (result.success) {
+                            showAlert('register-success', 'Account created successfully! You can now log in.');
+                            document.getElementById('register-form').reset();
+                            
+                            setTimeout(() => {
+                                showPage('login-page');
+                            }, 2000);
+                        }
+                    } catch (error) {
+                        showAlert('register-alert', error.message);
+                    }
+                });
+
+                // Logout
+                document.getElementById('logout-btn').addEventListener('click', () => {
+                    CameraManager.stopCamera();
+                    currentUser = null;
+                    authToken = null;
+                    localStorage.removeItem('securecam_user');
+                    localStorage.removeItem('securecam_token');
+                    this.showLogin();
+                });
+
+                // Navigation
+                document.querySelectorAll('.nav-link').forEach(link => {
+                    link.addEventListener('click', (e) => {
+                        e.preventDefault();
+                        const page = e.target.getAttribute('data-page');
+                        
+                        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+                        e.target.classList.add('active');
+                        
+                        if (page === 'dashboard') {
+                            showPage('dashboard-page');
+                            UIManager.loadCameras();
+                            UIManager.loadEvents();
+                        } else if (page === 'cameras') {
+                            showPage('cameras-page');
+                            UIManager.loadCameras();
+                        } else if (page === 'events') {
+                            showPage('events-page');
+                            UIManager.loadEvents();
+                        } else if (page === 'settings') {
+                            showPage('settings-page');
+                        }
+                    });
+                });
+
+                // Camera management
+                document.getElementById('add-camera-btn').addEventListener('click', () => {
+                    showPage('camera-setup-page');
+                });
+
+                document.getElementById('back-to-cameras-from-setup').addEventListener('click', () => {
+                    CameraManager.stopCamera(
+                        document.getElementById('setup-camera-feed'),
+                        document.getElementById('setup-camera-placeholder')
+                    );
+                    toggleSetupCameraButtons(false);
+                    showPage('cameras-page');
+                });
+
+                // Camera setup controls
+                document.getElementById('start-camera-btn').addEventListener('click', async () => {
+                    const result = await CameraManager.startCamera(
+                        document.getElementById('setup-camera-feed'),
+                        document.getElementById('setup-camera-placeholder')
+                    );
+                    
+                    if (result.success) {
+                        toggleSetupCameraButtons(true);
+                    } else {
+                        alert(result.message);
+                    }
+                });
+
+                document.getElementById('stop-camera-btn').addEventListener('click', () => {
+                    CameraManager.stopCamera(
+                        document.getElementById('setup-camera-feed'),
+                        document.getElementById('setup-camera-placeholder')
+                    );
+                    toggleSetupCameraButtons(false);
+                });
+
+                document.getElementById('capture-snapshot-btn').addEventListener('click', () => {
+                    CameraManager.takeSnapshot(
+                        document.getElementById('setup-camera-feed'),
+                        document.getElementById('snapshots-container')
+                    );
+                });
+
+                document.getElementById('save-camera-btn').addEventListener('click', async () => {
+                    const name = document.getElementById('camera-name').value;
+                    const location = document.getElementById('camera-location').value;
+                    const quality = document.getElementById('stream-quality').value;
+                    
+                    if (!name || !location) {
+                        alert('Please enter a camera name and location');
+                        return;
+                    }
+                    
+                    try {
+                        const result = await ApiService.createCamera({ name, location, quality });
+                        
+                        if (result.success) {
+                            alert(`Camera "${name}" saved successfully!`);
+                            
+                            // Reset form
+                            document.getElementById('camera-name').value = '';
+                            document.getElementById('camera-location').value = '';
+                            document.getElementById('snapshots-container').innerHTML = '';
+                            
+                            CameraManager.stopCamera(
+                                document.getElementById('setup-camera-feed'),
+                                document.getElementById('setup-camera-placeholder')
+                            );
+                            toggleSetupCameraButtons(false);
+                            
+                            showPage('cameras-page');
+                            UIManager.loadCameras();
+                        }
+                    } catch (error) {
+                        alert('Error saving camera: ' + error.message);
+                    }
+                });
+
+                // Live view controls
+                document.getElementById('start-live-camera').addEventListener('click', async () => {
+                    const result = await CameraManager.startCamera(
+                        document.getElementById('camera-feed'),
+                        document.getElementById('camera-placeholder')
+                    );
+                    
+                    if (result.success) {
+                        toggleCameraButtons(true);
+                        document.getElementById('stream-status').textContent = 'Streaming live to cloud';
+                    } else {
+                        alert(result.message);
+                    }
+                });
+
+                document.getElementById('stop-live-camera').addEventListener('click', () => {
+                    CameraManager.stopCamera(
+                        document.getElementById('camera-feed'),
+                        document.getElementById('camera-placeholder')
+                    );
+                    toggleCameraButtons(false);
+                    document.getElementById('stream-status').textContent = 'Stream stopped';
+                });
+
+                document.getElementById('take-snapshot').addEventListener('click', () => {
+                    CameraManager.takeSnapshot(
+                        document.getElementById('camera-feed'),
+                        document.getElementById('live-snapshots-container')
+                    );
+                });
+
+                document.getElementById('record-event-btn').addEventListener('click', async () => {
+                    if (!CameraManager.currentCamera) {
+                        alert('No camera selected');
+                        return;
+                    }
+                    
+                    try {
+                        await ApiService.createEvent({
+                            cameraId: CameraManager.currentCamera.id,
+                            type: 'manual',
+                            description: 'Manual event recorded by user'
+                        });
+                        alert('Event recorded successfully!');
+                        UIManager.loadEvents();
+                    } catch (error) {
+                        alert('Error recording event: ' + error.message);
+                    }
+                });
+
+                // Dynamic camera view buttons
+                document.addEventListener('click', (e) => {
+                    if (e.target.closest('.view-camera-btn')) {
+                        const button = e.target.closest('.view-camera-btn');
+                        const cameraData = JSON.parse(button.getAttribute('data-camera').replace(/&apos;/g, "'"));
+                        
+                        CameraManager.currentCamera = cameraData;
+                        document.getElementById('camera-name').textContent = cameraData.name;
+                        document.getElementById('stream-id').textContent = cameraData.streamId;
+                        showPage('live-view-page');
+                    }
+                });
+
+                // Back to cameras from live view
+                document.getElementById('back-to-cameras').addEventListener('click', () => {
+                    CameraManager.stopCamera(
+                        document.getElementById('camera-feed'),
+                        document.getElementById('camera-placeholder')
+                    );
+                    toggleCameraButtons(false);
+                    CameraManager.currentCamera = null;
+                    showPage('cameras-page');
+                });
             }
+        };
+
+        // Utility Functions
+        function showPage(pageId) {
+            document.querySelectorAll('div[id$="-page"]').forEach(page => {
+                page.classList.add('hidden');
+            });
+            document.getElementById(pageId).classList.remove('hidden');
+        }
+
+        function updateNavVisibility(isLoggedIn) {
+            const nav = document.querySelector('nav');
+            const userActions = document.querySelector('.user-actions');
             
-            function toggleSetupCameraButtons(isStreaming) {
-                const startBtn = document.getElementById('start-camera-btn');
-                const stopBtn = document.getElementById('stop-camera-btn');
-                
-                if (isStreaming) {
-                    startBtn.classList.add('hidden');
-                    stopBtn.classList.remove('hidden');
-                } else {
-                    startBtn.classList.remove('hidden');
-                    stopBtn.classList.add('hidden');
-                }
+            if (isLoggedIn) {
+                nav.style.display = 'block';
+                userActions.style.display = 'flex';
+            } else {
+                nav.style.display = 'none';
+                userActions.style.display = 'none';
             }
+        }
+
+        function showAlert(alertId, message) {
+            const alert = document.getElementById(alertId);
+            alert.textContent = message;
+            alert.classList.remove('hidden');
+        }
+
+        function hideAlert(alertId) {
+            document.getElementById(alertId).classList.add('hidden');
+        }
+
+        function toggleCameraButtons(isStreaming) {
+            const startBtn = document.getElementById('start-live-camera');
+            const stopBtn = document.getElementById('stop-live-camera');
+            
+            if (isStreaming) {
+                startBtn.classList.add('hidden');
+                stopBtn.classList.remove('hidden');
+            } else {
+                startBtn.classList.remove('hidden');
+                stopBtn.classList.add('hidden');
+            }
+        }
+
+        function toggleSetupCameraButtons(isStreaming) {
+            const startBtn = document.getElementById('start-camera-btn');
+            const stopBtn = document.getElementById('stop-camera-btn');
+            
+            if (isStreaming) {
+                startBtn.classList.add('hidden');
+                stopBtn.classList.remove('hidden');
+            } else {
+                startBtn.classList.remove('hidden');
+                stopBtn.classList.add('hidden');
+            }
+        }
+
+        // Initialize the app
+        document.addEventListener('DOMContentLoaded', () => {
+            AppState.init();
         });
     </script>
 </body>

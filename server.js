@@ -3,6 +3,7 @@ const cors = require('cors');
 const { google } = require('googleapis');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,7 +15,6 @@ app.use(express.json());
 // Google Sheets setup
 let auth;
 try {
-  // For Render Secret Files - it will be available at /etc/secrets/credentials.json
   const credentialsPath = process.env.NODE_ENV === 'production' 
     ? '/etc/secrets/credentials.json' 
     : 'credentials.json';
@@ -35,10 +35,6 @@ const sheets = google.sheets({ version: 'v4', auth });
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// Daily.co configuration - USING YOUR CREDENTIALS
-const DAILY_API_KEY = process.env.DAILY_API_KEY || '8526f95d464a7af4af3e0c89b6f39079c251ae19549cb2505e8801b71f1ea46d';
-const DAILY_DOMAIN = process.env.DAILY_DOMAIN || 'apdg.daily.co';
-
 // Validate required environment variables
 if (!SPREADSHEET_ID) {
   console.error('Missing SPREADSHEET_ID environment variable');
@@ -51,7 +47,9 @@ if (!JWT_SECRET) {
 }
 
 console.log('Server started successfully with Spreadsheet ID:', SPREADSHEET_ID);
-console.log('Daily.co configured with domain:', DAILY_DOMAIN);
+
+// WebRTC signaling - store offers/answers/candidates
+const webrtcSessions = new Map();
 
 // Store active streams in memory
 const activeStreams = new Map();
@@ -108,78 +106,6 @@ class GoogleSheetsDB {
 }
 
 const db = new GoogleSheetsDB(sheets, SPREADSHEET_ID);
-
-// Daily.co API helper
-class DailyService {
-  static async createRoom(roomName, properties = {}) {
-    const response = await fetch('https://api.daily.co/v1/rooms', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${DAILY_API_KEY}`
-      },
-      body: JSON.stringify({
-        name: roomName,
-        privacy: 'public',
-        properties: {
-          enable_chat: false,
-          enable_knocking: false,
-          enable_screenshare: false,
-          start_video_off: false,
-          start_audio_off: true,
-          exp: Math.round(Date.now() / 1000) + (60 * 60 * 24), // 24 hours
-          ...properties
-        }
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Daily API error: ${response.status} - ${errorText}`);
-    }
-
-    return await response.json();
-  }
-
-  static async getRoomToken(roomName, userId, isOwner = false) {
-    const response = await fetch('https://api.daily.co/v1/meeting-tokens', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${DAILY_API_KEY}`
-      },
-      body: JSON.stringify({
-        properties: {
-          room_name: roomName,
-          user_id: userId,
-          is_owner: isOwner,
-          enable_screenshare: false,
-          start_video_off: false,
-          start_audio_off: true
-        }
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Daily token error: ${response.status} - ${errorText}`);
-    }
-
-    const data = await response.json();
-    return data.token;
-  }
-
-  static async deleteRoom(roomName) {
-    const response = await fetch(`https://api.daily.co/v1/rooms/${roomName}`, {
-      method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${DAILY_API_KEY}`
-      }
-    });
-
-    return response.ok;
-  }
-}
 
 // Initialize Google Sheets (run once)
 app.post('/api/init', async (req, res) => {
@@ -246,9 +172,181 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// ===== DAILY.CO STREAMING ROUTES =====
+// ===== WEBRTC SIGNALING ROUTES =====
 
-// Create a streaming room
+// Create a WebRTC session
+app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
+  try {
+    const { cameraId, cameraName } = req.body;
+    
+    if (!cameraId) {
+      return res.status(400).json({ error: 'Camera ID is required' });
+    }
+
+    const sessionId = uuidv4();
+    
+    // Create WebRTC session
+    webrtcSessions.set(sessionId, {
+      cameraId,
+      cameraName: cameraName || 'Camera Stream',
+      owner: req.user.userId,
+      createdAt: new Date().toISOString(),
+      offer: null,
+      answer: null,
+      candidates: [],
+      isActive: true
+    });
+
+    // Store stream info
+    activeStreams.set(sessionId, {
+      cameraId,
+      cameraName: cameraName || 'Camera Stream',
+      owner: req.user.userId,
+      startedAt: new Date().toISOString(),
+      isActive: true,
+      type: 'webrtc'
+    });
+
+    // Log stream event
+    await db.appendRow('events', [
+      Date.now().toString(),
+      cameraId,
+      'webrtc_session_created',
+      `WebRTC session created: ${cameraName || 'Camera'}`,
+      new Date().toISOString()
+    ]);
+
+    console.log(`WebRTC session created: ${sessionId}`);
+    
+    res.json({ 
+      success: true, 
+      sessionId,
+      message: 'WebRTC session created successfully'
+    });
+  } catch (error) {
+    console.error('Error creating WebRTC session:', error);
+    res.status(500).json({ error: 'Failed to create WebRTC session: ' + error.message });
+  }
+});
+
+// Store WebRTC offer
+app.post('/api/webrtc/:sessionId/offer', authenticateToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { offer } = req.body;
+    
+    const session = webrtcSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'WebRTC session not found' });
+    }
+
+    session.offer = offer;
+    session.candidates = []; // Clear previous candidates
+    
+    console.log(`Offer stored for session: ${sessionId}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error storing offer:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Store WebRTC answer
+app.post('/api/webrtc/:sessionId/answer', authenticateToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { answer } = req.body;
+    
+    const session = webrtcSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'WebRTC session not found' });
+    }
+
+    session.answer = answer;
+    
+    console.log(`Answer stored for session: ${sessionId}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error storing answer:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add ICE candidate
+app.post('/api/webrtc/:sessionId/candidate', authenticateToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { candidate } = req.body;
+    
+    const session = webrtcSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'WebRTC session not found' });
+    }
+
+    session.candidates.push(candidate);
+    
+    console.log(`ICE candidate added to session: ${sessionId}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error adding ICE candidate:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get WebRTC session data
+app.get('/api/webrtc/:sessionId', authenticateToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const session = webrtcSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'WebRTC session not found' });
+    }
+
+    res.json({ 
+      success: true, 
+      session: {
+        sessionId,
+        cameraId: session.cameraId,
+        cameraName: session.cameraName,
+        offer: session.offer,
+        answer: session.answer,
+        candidates: session.candidates,
+        isActive: session.isActive
+      }
+    });
+  } catch (error) {
+    console.error('Error getting WebRTC session:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Poll for WebRTC session updates (for the viewer)
+app.get('/api/webrtc/:sessionId/poll', authenticateToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const session = webrtcSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'WebRTC session not found' });
+    }
+
+    res.json({ 
+      success: true, 
+      hasOffer: !!session.offer,
+      hasAnswer: !!session.answer,
+      candidates: session.candidates,
+      isActive: session.isActive
+    });
+  } catch (error) {
+    console.error('Error polling WebRTC session:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== STREAMING ROUTES =====
+
+// Create a streaming session
 app.post('/api/streams/start', authenticateToken, async (req, res) => {
   try {
     const { cameraId, cameraName } = req.body;
@@ -257,34 +355,16 @@ app.post('/api/streams/start', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Camera ID is required' });
     }
 
-    // Create unique room name
-    const roomName = `camera-${cameraId}-${Date.now()}`;
+    const streamId = `stream-${cameraId}-${Date.now()}`;
     
-    console.log('Creating Daily.co room:', roomName);
-    
-    // Create room in Daily.co (REMOVED enable_recording)
-    const room = await DailyService.createRoom(roomName, {
-      enable_advanced_chat: false
-    });
-
-    // Generate owner token (for the streamer)
-    const ownerToken = await DailyService.getRoomToken(roomName, req.user.userId, true);
-
-    // Generate viewer token (for viewers)
-    const viewerToken = await DailyService.getRoomToken(roomName, 'viewer', false);
-
     // Store stream info
-    const streamId = roomName;
     activeStreams.set(streamId, {
       cameraId,
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
-      roomName,
-      ownerToken,
-      viewerToken,
       startedAt: new Date().toISOString(),
       isActive: true,
-      url: room.url
+      type: 'local'
     });
 
     // Log stream event
@@ -292,11 +372,11 @@ app.post('/api/streams/start', authenticateToken, async (req, res) => {
       Date.now().toString(),
       cameraId,
       'stream_started',
-      `Real video stream started: ${cameraName || 'Camera'}`,
+      `Local stream started: ${cameraName || 'Camera'}`,
       new Date().toISOString()
     ]);
 
-    console.log(`Daily.co stream started: ${roomName}`);
+    console.log(`Stream session created: ${streamId}`);
     
     res.json({ 
       success: true, 
@@ -305,54 +385,55 @@ app.post('/api/streams/start', authenticateToken, async (req, res) => {
         id: streamId,
         cameraId,
         cameraName: cameraName || 'Camera Stream',
-        roomName,
-        ownerToken,
-        viewerToken,
-        url: room.url,
-        startedAt: new Date().toISOString()
+        startedAt: new Date().toISOString(),
+        type: 'local'
       },
-      message: 'Real video stream started successfully!'
+      message: 'Stream session created! Camera is now streaming locally.'
     });
   } catch (error) {
-    console.error('Error starting Daily.co stream:', error);
-    res.status(500).json({ error: 'Failed to start video stream: ' + error.message });
+    console.error('Error starting stream:', error);
+    res.status(500).json({ error: 'Failed to start streaming session: ' + error.message });
   }
 });
 
-// Stop a stream and delete the room
+// Stop a stream
 app.post('/api/streams/:id/stop', authenticateToken, async (req, res) => {
   try {
     const streamId = req.params.id;
     const stream = activeStreams.get(streamId);
     
     if (stream && stream.owner === req.user.userId) {
-      // Delete room from Daily.co
-      await DailyService.deleteRoom(stream.roomName);
+      // Also clean up WebRTC session if exists
+      webrtcSessions.forEach((session, sessionId) => {
+        if (session.cameraId === stream.cameraId) {
+          webrtcSessions.delete(sessionId);
+        }
+      });
 
       // Log stream event
       await db.appendRow('events', [
         Date.now().toString(),
         stream.cameraId,
         'stream_stopped',
-        `Real video stream stopped: ${stream.cameraName}`,
+        `Stream stopped: ${stream.cameraName}`,
         new Date().toISOString()
       ]);
 
       activeStreams.delete(streamId);
-      console.log(`Daily.co stream stopped: ${stream.roomName}`);
+      console.log(`Stream stopped: ${streamId}`);
       
-      res.json({ success: true, message: 'Video stream stopped successfully' });
+      res.json({ success: true, message: 'Stream stopped successfully' });
     } else {
       res.status(404).json({ error: 'Stream not found or not authorized' });
     }
   } catch (error) {
-    console.error('Error stopping Daily.co stream:', error);
+    console.error('Error stopping stream:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Get stream token for viewing
-app.get('/api/streams/:id/token', authenticateToken, async (req, res) => {
+// Get stream info
+app.get('/api/streams/:id', authenticateToken, async (req, res) => {
   try {
     const streamId = req.params.id;
     const stream = activeStreams.get(streamId);
@@ -360,15 +441,13 @@ app.get('/api/streams/:id/token', authenticateToken, async (req, res) => {
     if (stream && stream.isActive) {
       res.json({ 
         success: true, 
-        token: stream.viewerToken,
-        url: stream.url,
-        roomName: stream.roomName
+        streamInfo: stream
       });
     } else {
       res.status(404).json({ error: 'Stream not found or inactive' });
     }
   } catch (error) {
-    console.error('Error getting stream token:', error);
+    console.error('Error getting stream:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -383,10 +462,9 @@ app.get('/api/streams', authenticateToken, async (req, res) => {
         cameraId: stream.cameraId,
         cameraName: stream.cameraName,
         owner: stream.owner,
-        roomName: stream.roomName,
         startedAt: stream.startedAt,
         isActive: stream.isActive,
-        url: stream.url
+        type: stream.type
       }));
     
     res.json({ success: true, streams });
@@ -561,8 +639,14 @@ app.post('/api/cameras/:id/delete', authenticateToken, async (req, res) => {
     // Stop any active streams for this camera
     for (const [streamId, stream] of activeStreams.entries()) {
       if (stream.cameraId === cameraId) {
-        await DailyService.deleteRoom(stream.roomName);
         activeStreams.delete(streamId);
+      }
+    }
+
+    // Clean up WebRTC sessions
+    for (const [sessionId, session] of webrtcSessions.entries()) {
+      if (session.cameraId === cameraId) {
+        webrtcSessions.delete(sessionId);
       }
     }
 
@@ -646,8 +730,8 @@ app.get('/api/health', (req, res) => {
     status: 'OK', 
     message: 'SecureCam API is running',
     timestamp: new Date().toISOString(),
-    dailyEnabled: true,
-    dailyDomain: DAILY_DOMAIN
+    streamingEnabled: true,
+    webrtcEnabled: true
   });
 });
 
@@ -660,9 +744,8 @@ app.get('/', (req, res) => {
       </head>
       <body>
         <h1>SecureCam CCTV API</h1>
-        <p>API is running successfully with Daily.co streaming!</p>
+        <p>API is running successfully with WebRTC streaming!</p>
         <p>Use the frontend app to interact with this API.</p>
-        <p>Daily.co Domain: ${DAILY_DOMAIN}</p>
       </body>
     </html>
   `);
@@ -673,7 +756,7 @@ app.listen(PORT, () => {
   console.log(`SecureCam server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Google Sheet ID: ${SPREADSHEET_ID}`);
-  console.log(`Daily.co Domain: ${DAILY_DOMAIN}`);
+  console.log(`WebRTC signaling enabled`);
 });
 
 module.exports = app;

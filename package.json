@@ -1,7 +1,7 @@
 {
   "name": "securecam-backend",
   "version": "1.0.0",
-  "description": "CCTV app backend with Google Sheets and Daily.co streaming",
+  "description": "CCTV app backend with Google Sheets and WebRTC streaming",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
@@ -13,7 +13,8 @@
     "dotenv": "^16.3.1",
     "googleapis": "^126.0.1",
     "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2"
+    "jsonwebtoken": "^9.0.2",
+    "uuid": "^9.0.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

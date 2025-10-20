@@ -168,7 +168,7 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// ===== WEBRTC SIGNALING ROUTES =====
+// ===== ENHANCED WEBRTC SIGNALING ROUTES WITH MULTI-VIEWER SUPPORT =====
 
 // Create a WebRTC session - COMPATIBILITY ENDPOINT
 app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
@@ -181,16 +181,18 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
 
     const sessionId = uuidv4();
     
-    // Create WebRTC session
+    // Create WebRTC session with multi-viewer support
     webrtcSessions.set(sessionId, {
       cameraId,
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
       createdAt: new Date().toISOString(),
       offer: null,
-      answer: null,
-      candidates: [],
-      isActive: true
+      answers: new Map(), // Store multiple answers for multiple viewers
+      candidates: new Map(), // Store candidates per viewer
+      viewers: new Set(), // Track active viewers
+      isActive: true,
+      lastActivity: Date.now()
     });
 
     // Store stream info
@@ -200,7 +202,8 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
       owner: req.user.userId,
       startedAt: new Date().toISOString(),
       isActive: true,
-      type: 'webrtc'
+      type: 'webrtc',
+      viewerCount: 0
     });
 
     // Log stream event
@@ -212,7 +215,7 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
       new Date().toISOString()
     ]);
 
-    console.log(`WebRTC session created via compatibility endpoint: ${sessionId}`);
+    console.log(`WebRTC session created: ${sessionId}`);
     
     res.json({ 
       success: true, 
@@ -236,16 +239,18 @@ app.post('/api/webrtc/session', authenticateToken, async (req, res) => {
 
     const sessionId = uuidv4();
     
-    // Create WebRTC session
+    // Create WebRTC session with multi-viewer support
     webrtcSessions.set(sessionId, {
       cameraId,
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
       createdAt: new Date().toISOString(),
       offer: null,
-      answer: null,
-      candidates: [],
-      isActive: true
+      answers: new Map(), // Store multiple answers for multiple viewers
+      candidates: new Map(), // Store candidates per viewer
+      viewers: new Set(), // Track active viewers
+      isActive: true,
+      lastActivity: Date.now()
     });
 
     // Store stream info
@@ -255,7 +260,8 @@ app.post('/api/webrtc/session', authenticateToken, async (req, res) => {
       owner: req.user.userId,
       startedAt: new Date().toISOString(),
       isActive: true,
-      type: 'webrtc'
+      type: 'webrtc',
+      viewerCount: 0
     });
 
     // Log stream event
@@ -292,7 +298,7 @@ app.post('/api/webrtc/session/:sessionId/offer', authenticateToken, async (req, 
     }
 
     session.offer = offer;
-    session.candidates = []; // Clear previous candidates
+    session.lastActivity = Date.now();
     
     console.log(`Offer stored for session: ${sessionId}`);
     res.json({ success: true });
@@ -302,20 +308,30 @@ app.post('/api/webrtc/session/:sessionId/offer', authenticateToken, async (req, 
   }
 });
 
-// Store WebRTC answer
+// Enhanced answer storage for multiple viewers
 app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { answer } = req.body;
+    const viewerId = req.user.userId;
     
     const session = webrtcSessions.get(sessionId);
     if (!session) {
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
 
-    session.answer = answer;
+    // Store answer for this specific viewer
+    session.answers.set(viewerId, answer);
+    session.viewers.add(viewerId);
+    session.lastActivity = Date.now();
     
-    console.log(`Answer stored for session: ${sessionId}`);
+    // Update viewer count in active streams
+    const stream = activeStreams.get(sessionId);
+    if (stream) {
+      stream.viewerCount = session.viewers.size;
+    }
+    
+    console.log(`Answer stored for viewer ${viewerId} in session: ${sessionId}`);
     res.json({ success: true });
   } catch (error) {
     console.error('Error storing answer:', error);
@@ -323,20 +339,28 @@ app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req,
   }
 });
 
-// Add ICE candidate
+// Enhanced candidate storage for multiple viewers
 app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { candidate } = req.body;
+    const viewerId = req.user.userId;
     
     const session = webrtcSessions.get(sessionId);
     if (!session) {
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
 
-    session.candidates.push(candidate);
+    // Initialize candidates array for this viewer if it doesn't exist
+    if (!session.candidates.has(viewerId)) {
+      session.candidates.set(viewerId, []);
+    }
     
-    console.log(`ICE candidate added to session: ${sessionId}`);
+    session.candidates.get(viewerId).push(candidate);
+    session.viewers.add(viewerId);
+    session.lastActivity = Date.now();
+    
+    console.log(`ICE candidate added for viewer ${viewerId} in session: ${sessionId}`);
     res.json({ success: true });
   } catch (error) {
     console.error('Error adding ICE candidate:', error);
@@ -344,15 +368,24 @@ app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (r
   }
 });
 
-// Get WebRTC session data
+// Enhanced WebRTC session data with viewer tracking
 app.get('/api/webrtc/session/:sessionId', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
+    const viewerId = req.user.userId;
     
     const session = webrtcSessions.get(sessionId);
     if (!session) {
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
+
+    // Update viewer activity
+    session.viewers.add(viewerId);
+    session.lastActivity = Date.now();
+    
+    // Get viewer-specific data
+    const viewerAnswer = session.answers.get(viewerId);
+    const viewerCandidates = session.candidates.get(viewerId) || [];
 
     res.json({ 
       success: true, 
@@ -361,9 +394,10 @@ app.get('/api/webrtc/session/:sessionId', authenticateToken, async (req, res) =>
         cameraId: session.cameraId,
         cameraName: session.cameraName,
         offer: session.offer,
-        answer: session.answer,
-        candidates: session.candidates,
-        isActive: session.isActive
+        answer: viewerAnswer,
+        candidates: viewerCandidates,
+        isActive: session.isActive,
+        viewerCount: session.viewers.size
       }
     });
   } catch (error) {
@@ -372,8 +406,41 @@ app.get('/api/webrtc/session/:sessionId', authenticateToken, async (req, res) =>
   }
 });
 
-// Poll for WebRTC session updates (for the viewer)
+// Enhanced polling with viewer tracking
 app.get('/api/webrtc/session/:sessionId/poll', authenticateToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const viewerId = req.user.userId;
+    
+    const session = webrtcSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'WebRTC session not found' });
+    }
+
+    // Update viewer activity
+    session.viewers.add(viewerId);
+    session.lastActivity = Date.now();
+
+    // Check if viewer has already submitted an answer
+    const hasViewerAnswer = session.answers.has(viewerId);
+    const viewerCandidates = session.candidates.get(viewerId) || [];
+
+    res.json({ 
+      success: true, 
+      hasOffer: !!session.offer,
+      hasAnswer: hasViewerAnswer,
+      candidates: viewerCandidates,
+      isActive: session.isActive,
+      viewerCount: session.viewers.size
+    });
+  } catch (error) {
+    console.error('Error polling WebRTC session:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get session statistics
+app.get('/api/webrtc/session/:sessionId/stats', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     
@@ -384,16 +451,38 @@ app.get('/api/webrtc/session/:sessionId/poll', authenticateToken, async (req, re
 
     res.json({ 
       success: true, 
-      hasOffer: !!session.offer,
-      hasAnswer: !!session.answer,
-      candidates: session.candidates,
-      isActive: session.isActive
+      stats: {
+        sessionId,
+        viewerCount: session.viewers.size,
+        isActive: session.isActive,
+        createdAt: session.createdAt,
+        lastActivity: session.lastActivity,
+        cameraName: session.cameraName
+      }
     });
   } catch (error) {
-    console.error('Error polling WebRTC session:', error);
+    console.error('Error getting session stats:', error);
     res.status(500).json({ error: error.message });
   }
 });
+
+// Clean up inactive sessions (run periodically)
+setInterval(() => {
+  const now = Date.now();
+  const inactiveTimeout = 5 * 60 * 1000; // 5 minutes
+  
+  for (const [sessionId, session] of webrtcSessions.entries()) {
+    if (now - session.lastActivity > inactiveTimeout) {
+      console.log(`Cleaning up inactive WebRTC session: ${sessionId}`);
+      webrtcSessions.delete(sessionId);
+      
+      // Also remove from active streams
+      if (activeStreams.has(sessionId)) {
+        activeStreams.delete(sessionId);
+      }
+    }
+  }
+}, 60000); // Run every minute
 
 // ===== STREAMING ROUTES =====
 
@@ -515,7 +604,8 @@ app.get('/api/streams', authenticateToken, async (req, res) => {
         owner: stream.owner,
         startedAt: stream.startedAt,
         isActive: stream.isActive,
-        type: stream.type
+        type: stream.type,
+        viewerCount: stream.viewerCount || 0
       }));
     
     res.json({ success: true, streams });
@@ -817,7 +907,7 @@ app.listen(PORT, () => {
   console.log(`SecureCam server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Google Sheet ID: ${SPREADSHEET_ID}`);
-  console.log(`WebRTC signaling enabled`);
+  console.log(`WebRTC signaling enabled with multi-viewer support`);
 });
 
 module.exports = app;

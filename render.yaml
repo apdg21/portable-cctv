@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: securecam-backend
+    name: securecam-fullstack
     env: node
     plan: free
     buildCommand: npm install
@@ -11,4 +11,7 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: SPREADSHEET_ID
-        value: your_google_sheet_id
+        fromSecret: true
+    secretFiles:
+      - key: credentials.json
+        name: google-sheets-credentials

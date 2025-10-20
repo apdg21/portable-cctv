@@ -14,7 +14,7 @@ app.use(cors());
 app.use(express.json());
 
 // Serve static files (frontend)
-app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Google Sheets setup
 let auth;
@@ -1053,7 +1053,7 @@ app.get('/api/health', (req, res) => {
 
 // Serve frontend for all other routes
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Start server

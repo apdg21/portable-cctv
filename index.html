@@ -849,10 +849,11 @@
                     <video id="camera-feed" autoplay playsinline class="hidden"></video>
                     <div id="camera-placeholder">
                         <i class="fas fa-video fa-5x"></i>
-                        <p style="margin-top: 10px;" id="placeholder-text">Click 'Start Stream' to begin WebRTC streaming</p>
+                        <p style="margin-top: 10px;" id="placeholder-text">Connecting to stream...</p>
                     </div>
-                    <div class="streaming-indicator" id="streaming-role">Not Streaming</div>
+                    <div class="streaming-indicator" id="streaming-role">Not Connected</div>
                     <div class="video-controls">
+                        <!-- Streamer controls (only shown when user is streaming) -->
                         <button class="btn btn-primary" id="start-live-camera">
                             <i class="fas fa-broadcast-tower"></i> Start Stream
                         </button>
@@ -1062,42 +1063,42 @@
             
             // WebRTC endpoints
             createWebRTCSession: async function(cameraId, cameraName) {
-                return this.request('/webrtc/create-session', {
+                return this.request('/webrtc/session', {
                     method: 'POST',
                     body: JSON.stringify({ cameraId, cameraName })
                 });
             },
             
+            getWebRTCSession: async function(sessionId) {
+                return this.request(`/webrtc/session/${sessionId}`);
+            },
+            
+            pollWebRTCSession: async function(sessionId) {
+                return this.request(`/webrtc/session/${sessionId}/poll`);
+            },
+            
             sendWebRTCOffer: async function(sessionId, offer) {
-                return this.request(`/webrtc/${sessionId}/offer`, {
+                return this.request(`/webrtc/session/${sessionId}/offer`, {
                     method: 'POST',
                     body: JSON.stringify({ offer })
                 });
             },
             
             sendWebRTCAnswer: async function(sessionId, answer) {
-                return this.request(`/webrtc/${sessionId}/answer`, {
+                return this.request(`/webrtc/session/${sessionId}/answer`, {
                     method: 'POST',
                     body: JSON.stringify({ answer })
                 });
             },
             
             sendWebRTCCandidate: async function(sessionId, candidate) {
-                return this.request(`/webrtc/${sessionId}/candidate`, {
+                return this.request(`/webrtc/session/${sessionId}/candidate`, {
                     method: 'POST',
                     body: JSON.stringify({ candidate })
                 });
             },
             
-            getWebRTCSession: async function(sessionId) {
-                return this.request(`/webrtc/${sessionId}`);
-            },
-            
-            pollWebRTCSession: async function(sessionId) {
-                return this.request(`/webrtc/${sessionId}/poll`);
-            },
-            
-            // Event endpoints - FIXED to handle response structure
+            // Event endpoints
             getEvents: async function() {
                 const result = await this.request('/events');
                 return result.events || [];
@@ -1111,129 +1112,469 @@
             }
         };
 
-        // Enhanced Camera Manager with Back Camera Support
-        const CameraManager = {
-            stream: null,
-            currentCameraId: null,
-            selectedCamera: 'user', // 'user' for front, 'environment' for back
-
-            // Get active streams for current user's cameras
-            getActiveStreams: async function() {
-                try {
-                    const result = await API.getStreams();
-                    const cameras = await API.getCameras();
-                    
-                    // Filter streams for user's cameras
-                    const userCameraIds = cameras.map(cam => cam.id);
-                    return result.filter(stream => 
-                        userCameraIds.includes(stream.cameraId) && 
-                        stream.type === 'webrtc'
-                    );
-                } catch (error) {
-                    console.error('Error getting active streams:', error);
-                    return [];
+        // UI Manager
+        const UIManager = {
+            // Show a specific page
+            showPage: function(pageId) {
+                // Hide all pages
+                document.querySelectorAll('[id$="-page"]').forEach(page => {
+                    page.classList.add('hidden');
+                });
+                
+                // Show the requested page
+                document.getElementById(pageId).classList.remove('hidden');
+                
+                // Update navigation
+                document.querySelectorAll('.nav-link').forEach(link => {
+                    link.classList.remove('active');
+                });
+                
+                // Update active nav link if it exists for this page
+                const navLink = document.querySelector(`[data-page="${pageId.replace('-page', '')}"]`);
+                if (navLink) {
+                    navLink.classList.add('active');
                 }
             },
-
-            // Start camera for streaming with camera selection
-            startCamera: async function(videoElement, placeholderElement, facingMode = 'user') {
+            
+            // Show login page
+            showLogin: function() {
+                this.showPage('login-page');
+                document.getElementById('login-email').focus();
+            },
+            
+            // Show register page
+            showRegister: function() {
+                this.showPage('register-page');
+                document.getElementById('register-name').focus();
+            },
+            
+            // Show dashboard
+            showDashboard: function() {
+                this.showPage('dashboard-page');
+                this.updateDashboard();
+            },
+            
+            // Show cameras page
+            showCameras: function() {
+                this.showPage('cameras-page');
+                this.updateCamerasList();
+            },
+            
+            // Show streams page
+            showStreams: function() {
+                this.showPage('streams-page');
+                this.updateStreamsList();
+            },
+            
+            // Show camera setup page
+            showCameraSetup: function() {
+                this.showPage('camera-setup-page');
+            },
+            
+            // Show live view page
+            showLiveView: function(cameraId, cameraName) {
+                this.showPage('live-view-page');
+                document.getElementById('camera-name').textContent = cameraName;
+                currentCameraId = cameraId;
+                
+                // Reset UI state
+                document.getElementById('camera-placeholder').classList.remove('hidden');
+                document.getElementById('camera-feed').classList.add('hidden');
+                document.getElementById('stream-status').textContent = 'Ready to connect';
+                document.getElementById('stream-role-info').textContent = 'Not connected';
+                document.getElementById('streaming-role').textContent = 'Not Connected';
+                document.getElementById('streaming-role').style.background = 'rgba(0,0,0,0.7)';
+                document.getElementById('placeholder-text').textContent = 'Connecting to stream...';
+                
+                // Show appropriate controls
+                document.getElementById('start-live-camera').classList.remove('hidden');
+                document.getElementById('stop-live-camera').classList.add('hidden');
+                
+                // Try to join existing stream
+                this.joinExistingStream(cameraId);
+            },
+            
+            // Show events page
+            showEvents: function() {
+                this.showPage('events-page');
+                this.updateEventsList();
+            },
+            
+            // Show settings page
+            showSettings: function() {
+                this.showPage('settings-page');
+                this.updateSettingsForm();
+            },
+            
+            // Update dashboard with data
+            updateDashboard: async function() {
                 try {
-                    const constraints = {
-                        video: { 
-                            width: { ideal: 1280 },
-                            height: { ideal: 720 },
-                            facingMode: facingMode
-                        }, 
-                        audio: false 
-                    };
-
-                    // Try to get the requested camera
-                    try {
-                        this.stream = await navigator.mediaDevices.getUserMedia(constraints);
-                    } catch (error) {
-                        console.warn(`Could not access ${facingMode} camera, trying default:`, error);
-                        // Fallback to default camera
-                        this.stream = await navigator.mediaDevices.getUserMedia({ 
-                            video: true, 
-                            audio: false 
+                    // Get cameras and events
+                    const cameras = await API.getCameras();
+                    const events = await API.getEvents();
+                    
+                    // Update stats
+                    document.getElementById('active-cameras-count').textContent = cameras.length;
+                    
+                    const today = new Date().toDateString();
+                    const todayEvents = events.filter(event => {
+                        const eventDate = new Date(event.timestamp).toDateString();
+                        return eventDate === today;
+                    });
+                    document.getElementById('events-today').textContent = todayEvents.length;
+                    
+                    // Calculate total hours (simulated)
+                    const totalHours = cameras.length * 24;
+                    document.getElementById('total-hours').textContent = totalHours;
+                    
+                    // Update recent events
+                    const recentEventsContainer = document.getElementById('recent-events');
+                    recentEventsContainer.innerHTML = '';
+                    
+                    const recentEvents = events.slice(0, 5);
+                    if (recentEvents.length === 0) {
+                        recentEventsContainer.innerHTML = '<p>No recent events</p>';
+                    } else {
+                        recentEvents.forEach(event => {
+                            const eventElement = document.createElement('div');
+                            eventElement.className = 'event-item';
+                            
+                            const eventDate = new Date(event.timestamp).toLocaleString();
+                            
+                            eventElement.innerHTML = `
+                                <h4>${event.type}</h4>
+                                <p>${event.description}</p>
+                                <div class="event-time">${eventDate}</div>
+                            `;
+                            
+                            recentEventsContainer.appendChild(eventElement);
                         });
                     }
-                    
-                    videoElement.srcObject = this.stream;
-                    videoElement.classList.remove('hidden');
-                    placeholderElement.classList.add('hidden');
-                    
-                    return { success: true };
                 } catch (error) {
-                    return { 
-                        success: false, 
-                        message: 'Could not access camera. Please check permissions.' 
+                    console.error('Error updating dashboard:', error);
+                }
+            },
+            
+            // Update cameras list
+            updateCamerasList: async function() {
+                try {
+                    const cameras = await API.getCameras();
+                    userCameras = cameras;
+                    
+                    const camerasList = document.getElementById('cameras-list');
+                    camerasList.innerHTML = '';
+                    
+                    if (cameras.length === 0) {
+                        camerasList.innerHTML = `
+                            <div style="grid-column: 1 / -1; text-align: center; padding: 3rem;">
+                                <i class="fas fa-camera fa-3x" style="color: #ddd; margin-bottom: 1rem;"></i>
+                                <h3>No cameras set up yet</h3>
+                                <p>Add your first camera to start monitoring</p>
+                                <button class="btn btn-primary" id="add-first-camera" style="margin-top: 1rem;">
+                                    <i class="fas fa-plus"></i> Add Camera
+                                </button>
+                            </div>
+                        `;
+                        
+                        document.getElementById('add-first-camera').addEventListener('click', () => {
+                            this.showCameraSetup();
+                        });
+                    } else {
+                        cameras.forEach(camera => {
+                            const cameraCard = document.createElement('div');
+                            cameraCard.className = 'camera-card';
+                            
+                            // Check if camera is streaming
+                            const isLive = camera.isStreaming || false;
+                            
+                            cameraCard.innerHTML = `
+                                <div class="camera-preview ${isLive ? 'live' : ''}">
+                                    <i class="fas fa-camera fa-3x"></i>
+                                    ${isLive ? '' : '<div class="device-status status-offline"><i class="fas fa-circle"></i> Offline</div>'}
+                                </div>
+                                <div class="camera-info">
+                                    <h3>${camera.name}</h3>
+                                    <p>${camera.location}</p>
+                                    <div class="camera-actions">
+                                        <button class="btn btn-primary btn-sm view-camera" data-id="${camera.id}" data-name="${camera.name}">
+                                            <i class="fas fa-eye"></i> ${isLive ? 'Watch Live' : 'View'}
+                                        </button>
+                                        <button class="btn btn-outline btn-sm" style="color: var(--danger); border-color: var(--danger);">
+                                            <i class="fas fa-trash"></i> Delete
+                                        </button>
+                                    </div>
+                                </div>
+                            `;
+                            
+                            camerasList.appendChild(cameraCard);
+                        });
+                        
+                        // Add event listeners to view buttons
+                        document.querySelectorAll('.view-camera').forEach(button => {
+                            button.addEventListener('click', (e) => {
+                                const cameraId = e.target.closest('.view-camera').dataset.id;
+                                const cameraName = e.target.closest('.view-camera').dataset.name;
+                                this.showLiveView(cameraId, cameraName);
+                            });
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error updating cameras list:', error);
+                }
+            },
+            
+            // Update streams list
+            updateStreamsList: async function() {
+                try {
+                    const streams = await API.getStreams();
+                    
+                    const streamsList = document.getElementById('streams-list');
+                    streamsList.innerHTML = '';
+                    
+                    if (streams.length === 0) {
+                        streamsList.innerHTML = `
+                            <div style="grid-column: 1 / -1; text-align: center; padding: 3rem;">
+                                <i class="fas fa-broadcast-tower fa-3x" style="color: #ddd; margin-bottom: 1rem;"></i>
+                                <h3>No active streams</h3>
+                                <p>Start a stream from one of your cameras to view it here</p>
+                            </div>
+                        `;
+                    } else {
+                        streams.forEach(stream => {
+                            const streamCard = document.createElement('div');
+                            streamCard.className = 'camera-card';
+                            
+                            streamCard.innerHTML = `
+                                <div class="camera-preview live">
+                                    <i class="fas fa-broadcast-tower fa-3x"></i>
+                                    <div class="device-status status-online"><i class="fas fa-circle"></i> Live</div>
+                                </div>
+                                <div class="camera-info">
+                                    <h3>${stream.cameraName}</h3>
+                                    <p>Started ${new Date(stream.startTime).toLocaleString()}</p>
+                                    <div class="camera-actions">
+                                        <button class="btn btn-primary btn-sm watch-stream" data-id="${stream.id}" data-camera-id="${stream.cameraId}" data-name="${stream.cameraName}">
+                                            <i class="fas fa-play"></i> Watch
+                                        </button>
+                                        <button class="btn btn-outline btn-sm stop-stream" data-id="${stream.id}" style="color: var(--danger); border-color: var(--danger);">
+                                            <i class="fas fa-stop"></i> Stop
+                                        </button>
+                                    </div>
+                                </div>
+                            `;
+                            
+                            streamsList.appendChild(streamCard);
+                        });
+                        
+                        // Add event listeners
+                        document.querySelectorAll('.watch-stream').forEach(button => {
+                            button.addEventListener('click', (e) => {
+                                const streamId = e.target.closest('.watch-stream').dataset.id;
+                                const cameraId = e.target.closest('.watch-stream').dataset.cameraId;
+                                const cameraName = e.target.closest('.watch-stream').dataset.name;
+                                this.showLiveView(cameraId, cameraName);
+                            });
+                        });
+                        
+                        document.querySelectorAll('.stop-stream').forEach(button => {
+                            button.addEventListener('click', async (e) => {
+                                const streamId = e.target.closest('.stop-stream').dataset.id;
+                                
+                                try {
+                                    await API.stopStream(streamId);
+                                    this.updateStreamsList();
+                                    this.updateCamerasList();
+                                } catch (error) {
+                                    console.error('Error stopping stream:', error);
+                                    alert('Failed to stop stream: ' + error.message);
+                                }
+                            });
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error updating streams list:', error);
+                }
+            },
+            
+            // Update events list
+            updateEventsList: async function() {
+                try {
+                    const events = await API.getEvents();
+                    userEvents = events;
+                    
+                    const eventsList = document.getElementById('events-list');
+                    eventsList.innerHTML = '';
+                    
+                    if (events.length === 0) {
+                        eventsList.innerHTML = '<p>No events recorded yet</p>';
+                    } else {
+                        events.forEach(event => {
+                            const eventElement = document.createElement('div');
+                            eventElement.className = 'event-item';
+                            
+                            const eventDate = new Date(event.timestamp).toLocaleString();
+                            
+                            eventElement.innerHTML = `
+                                <h4>${event.type}</h4>
+                                <p>${event.description}</p>
+                                <div class="event-time">${eventDate}</div>
+                            `;
+                            
+                            eventsList.appendChild(eventElement);
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error updating events list:', error);
+                }
+            },
+            
+            // Update settings form with user data
+            updateSettingsForm: function() {
+                if (currentUser) {
+                    document.getElementById('settings-name').value = currentUser.name || '';
+                    document.getElementById('settings-email').value = currentUser.email || '';
+                }
+            },
+            
+            // Try to join an existing stream for the camera
+            joinExistingStream: async function(cameraId) {
+                try {
+                    const streams = await API.getStreams();
+                    const activeStream = streams.find(stream => stream.cameraId === cameraId);
+                    
+                    if (activeStream) {
+                        console.log('Found active stream, joining as viewer:', activeStream.id);
+                        document.getElementById('placeholder-text').textContent = 'Connecting to active stream...';
+                        
+                        // Join as viewer
+                        const result = await WebRTCManager.joinStream(activeStream.id);
+                        
+                        if (result.success) {
+                            console.log('Successfully joined stream as viewer');
+                        } else {
+                            console.error('Failed to join stream:', result.error);
+                            document.getElementById('placeholder-text').textContent = 'Failed to connect to stream';
+                        }
+                    } else {
+                        console.log('No active stream found, ready to start streaming');
+                        document.getElementById('placeholder-text').textContent = 'Ready to start streaming';
+                    }
+                } catch (error) {
+                    console.error('Error checking for existing stream:', error);
+                }
+            }
+        };
+
+        // Camera Manager
+        const CameraManager = {
+            stream: null,
+            currentCamera: null,
+            
+            // Start camera for setup
+            startCamera: async function(videoElement, placeholderElement) {
+                try {
+                    // Stop any existing stream first
+                    if (this.stream) {
+                        this.stopCamera(videoElement, placeholderElement);
+                    }
+                    
+                    // Get user media with constraints for mobile
+                    const constraints = {
+                        video: {
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 },
+                            facingMode: 'environment'
+                        },
+                        audio: false
                     };
+                    
+                    this.stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    
+                    if (videoElement) {
+                        videoElement.srcObject = this.stream;
+                        videoElement.classList.remove('hidden');
+                        
+                        if (placeholderElement) {
+                            placeholderElement.classList.add('hidden');
+                        }
+                    }
+                    
+                    return { success: true, message: 'Camera started successfully' };
+                } catch (error) {
+                    console.error('Error starting camera:', error);
+                    return { success: false, message: 'Failed to access camera: ' + error.message };
                 }
             },
-
-            // Switch between front and back cameras
-            switchCamera: async function(videoElement, placeholderElement, facingMode) {
-                // Stop current stream
+            
+            // Stop camera
+            stopCamera: function(videoElement, placeholderElement) {
                 if (this.stream) {
-                    this.stream.getTracks().forEach(track => track.stop());
-                    this.stream = null;
-                }
-                
-                // Start new camera
-                return await this.startCamera(videoElement, placeholderElement, facingMode);
-            },
-
-            // Stop camera but keep WebRTC streaming active
-            stopCameraOnly: function(videoElement, placeholderElement) {
-                if (this.stream) {
-                    this.stream.getTracks().forEach(track => track.stop());
+                    this.stream.getTracks().forEach(track => {
+                        track.stop();
+                    });
                     this.stream = null;
                 }
                 
                 if (videoElement) {
                     videoElement.srcObject = null;
                     videoElement.classList.add('hidden');
+                    
+                    if (placeholderElement) {
+                        placeholderElement.classList.remove('hidden');
+                    placeholderElement.querySelector('p').textContent = 'Camera stopped';
+                    placeholderElement.querySelector('i').className = 'fas fa-camera fa-5x';
+                    placeholderElement.querySelector('i').style.color = '';
+                    placeholderElement.style.backgroundColor = '';
+                    placeholderElement.style.color = '';
+                }
+            },
+            
+            // Stop camera only (without updating UI)
+            stopCameraOnly: function(videoElement, placeholderElement) {
+                if (this.stream) {
+                    this.stream.getTracks().forEach(track => {
+                        track.stop();
+                    });
+                    this.stream = null;
                 }
                 
-                if (placeholderElement) {
-                    placeholderElement.classList.remove('hidden');
+                if (videoElement) {
+                    videoElement.srcObject = null;
                 }
             },
-
-            // Stop camera completely (including WebRTC)
-            stopCamera: function(videoElement, placeholderElement) {
-                this.stopCameraOnly(videoElement, placeholderElement);
-                WebRTCManager.close();
-            },
-
-            // Take snapshot from camera
+            
+            // Take snapshot from current camera stream
             takeSnapshot: function(videoElement, containerId) {
-                if (!videoElement.srcObject) return null;
+                if (!this.stream) {
+                    alert('No camera stream available');
+                    return null;
+                }
                 
                 const canvas = document.createElement('canvas');
+                const video = videoElement;
                 const context = canvas.getContext('2d');
-                canvas.width = videoElement.videoWidth;
-                canvas.height = videoElement.videoHeight;
                 
-                context.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
                 
-                const dataUrl = canvas.toDataURL('image/jpeg');
+                context.drawImage(video, 0, 0, canvas.width, canvas.height);
                 
-                // Add to snapshots container
+                const dataUrl = canvas.toDataURL('image/png');
+                
+                // Add to snapshots container if specified
                 if (containerId) {
                     const container = document.getElementById(containerId);
-                    const img = document.createElement('img');
-                    img.src = dataUrl;
-                    img.className = 'snapshot';
-                    container.appendChild(img);
+                    const snapshot = document.createElement('img');
+                    snapshot.src = dataUrl;
+                    snapshot.className = 'snapshot';
+                    container.appendChild(snapshot);
                 }
                 
                 return dataUrl;
             }
         };
 
-        // Enhanced WebRTC Manager with Persistent Streaming
+        // Enhanced WebRTC Manager with Proper Video Handling
         const WebRTCManager = {
             peerConnection: null,
             isInitiator: false,
@@ -1243,7 +1584,7 @@
             pollingInterval: null,
             isStreamingActive: false,
 
-            // Start streaming (Streamer device) - KEEP STREAMING ACTIVE
+            // Start streaming (Streamer device)
             startStreaming: async function(cameraId, cameraName, stream) {
                 try {
                     this.currentCameraId = cameraId;
@@ -1262,9 +1603,10 @@
                     // Initialize WebRTC as streamer
                     this.initWebRTC(true);
                     
-                    // Add local stream
+                    // Add local stream tracks to the connection
                     if (stream) {
                         stream.getTracks().forEach(track => {
+                            console.log('Adding track:', track.kind);
                             this.peerConnection.addTrack(track, stream);
                         });
                     }
@@ -1277,10 +1619,11 @@
 
                     console.log('WebRTC streaming started. Session:', this.sessionId);
                     
-                    // Update UI
+                    // Update UI for streamer
                     document.getElementById('streaming-role').textContent = 'STREAMING';
                     document.getElementById('streaming-role').style.background = 'var(--success)';
                     document.getElementById('stream-role-info').textContent = 'Streaming to other devices';
+                    document.getElementById('stream-status').textContent = 'Streaming active';
                     
                     // Start polling for viewers
                     this.startPollingForAnswer();
@@ -1298,7 +1641,7 @@
                 }
             },
 
-            // Join stream (Viewer device) - IMPROVED RECONNECTION
+            // Join stream (Viewer device)
             joinStream: async function(sessionId) {
                 try {
                     this.sessionId = sessionId;
@@ -1309,11 +1652,16 @@
                     
                     console.log('Joining WebRTC stream:', sessionId);
                     
-                    // Update UI
+                    // Update UI for viewer
                     document.getElementById('streaming-role').textContent = 'VIEWING';
                     document.getElementById('streaming-role').style.background = 'var(--secondary)';
                     document.getElementById('stream-role-info').textContent = 'Viewing remote stream';
                     document.getElementById('placeholder-text').textContent = 'Connecting to WebRTC stream...';
+                    document.getElementById('stream-status').textContent = 'Connecting...';
+                    
+                    // Hide streamer controls for viewer
+                    document.getElementById('start-live-camera').classList.add('hidden');
+                    document.getElementById('stop-live-camera').classList.add('hidden');
                     
                     // Start polling for streamer's offer
                     this.startPollingForOffer();
@@ -1321,22 +1669,6 @@
                     return { success: true };
                 } catch (error) {
                     console.error('Error joining WebRTC stream:', error);
-                    return { success: false, error: error.message };
-                }
-            },
-
-            // Reconnect to stream (for viewers who closed and want to view again)
-            reconnectStream: async function(sessionId) {
-                try {
-                    // First check if stream is still active
-                    const sessionData = await API.getWebRTCSession(sessionId);
-                    if (!sessionData.success || !sessionData.session.isActive) {
-                        return { success: false, error: 'Stream is no longer active' };
-                    }
-
-                    return await this.joinStream(sessionId);
-                } catch (error) {
-                    console.error('Error reconnecting to stream:', error);
                     return { success: false, error: error.message };
                 }
             },
@@ -1371,30 +1703,22 @@
                     } else if (state === 'disconnected' || state === 'failed') {
                         document.getElementById('stream-status').textContent = 'Connection lost';
                         this.stopConnectionMetrics();
-                        
-                        // Auto-reconnect for viewers
-                        if (!this.isInitiator && this.isStreamingActive) {
-                            setTimeout(() => {
-                                this.reconnectStream(this.sessionId);
-                            }, 2000);
-                        }
                     }
                 };
 
-                // Handle incoming stream (viewer only)
+                // Handle incoming stream (viewer only) - FIXED
                 this.peerConnection.ontrack = (event) => {
-                    if (!this.isInitiator) {
-                        console.log('Received remote stream');
+                    console.log('Received track event:', event);
+                    if (!this.isInitiator && event.streams && event.streams[0]) {
+                        console.log('Received remote stream with tracks:', event.streams[0].getTracks());
                         const videoElement = document.getElementById('camera-feed');
-                        if (videoElement && event.streams[0]) {
+                        if (videoElement) {
                             videoElement.srcObject = event.streams[0];
                             videoElement.classList.remove('hidden');
                             document.getElementById('camera-placeholder').classList.add('hidden');
                             
                             // Update UI
                             document.getElementById('stream-status').textContent = 'Stream connected';
-                            document.getElementById('start-live-camera').classList.add('hidden');
-                            document.getElementById('stop-live-camera').classList.remove('hidden');
                         }
                     }
                 };
@@ -1405,7 +1729,7 @@
                 if (this.pollingInterval) clearInterval(this.pollingInterval);
                 
                 let pollCount = 0;
-                const maxPolls = 30; // 30 seconds timeout
+                const maxPolls = 30;
                 
                 this.pollingInterval = setInterval(async () => {
                     try {
@@ -1535,7 +1859,7 @@
                 this.isStreamingActive = false;
                 
                 // Update UI
-                document.getElementById('streaming-role').textContent = 'Not Streaming';
+                document.getElementById('streaming-role').textContent = 'Not Connected';
                 document.getElementById('streaming-role').style.background = 'rgba(0,0,0,0.7)';
             },
 
@@ -1555,457 +1879,135 @@
                 this.sessionId = null;
                 this.isInitiator = false;
                 this.streamStartTime = null;
-                
-                // Don't set isStreamingActive to false - stream is still active on server
             }
         };
 
-        // UI Management
-        const UIManager = {
-            // Show a specific page
-            showPage: function(pageId) {
-                // Hide all pages
-                document.querySelectorAll('[id$="-page"]').forEach(page => {
-                    page.classList.add('hidden');
-                });
+        // Auth Manager
+        const AuthManager = {
+            // Check if user is logged in
+            checkAuth: function() {
+                const token = localStorage.getItem('securecam_token');
+                const user = localStorage.getItem('securecam_user');
                 
-                // Show the requested page
-                document.getElementById(pageId).classList.remove('hidden');
-                
-                // Update navigation
-                document.querySelectorAll('.nav-link').forEach(link => {
-                    link.classList.remove('active');
-                });
-                
-                // Set active nav link if it exists for this page
-                const navLink = document.querySelector(`[data-page="${pageId.replace('-page', '')}"]`);
-                if (navLink) {
-                    navLink.classList.add('active');
-                }
-            },
-            
-            // Show login page
-            showLogin: function() {
-                this.showPage('login-page');
-                document.getElementById('register-page').classList.add('hidden');
-            },
-            
-            // Show register page
-            showRegister: function() {
-                this.showPage('register-page');
-                document.getElementById('login-page').classList.add('hidden');
-            },
-            
-            // Show dashboard
-            showDashboard: function() {
-                this.showPage('dashboard-page');
-                this.updateDashboard();
-            },
-            
-            // Show cameras page
-            showCameras: function() {
-                this.showPage('cameras-page');
-                this.updateCamerasList();
-            },
-            
-            // Show streams page
-            showStreams: function() {
-                this.showPage('streams-page');
-                this.updateStreamsList();
-            },
-            
-            // Show camera setup page
-            showCameraSetup: function() {
-                this.showPage('camera-setup-page');
-            },
-            
-            // Show live view page
-            showLiveView: function(cameraId, cameraName, isViewer = false) {
-                this.showPage('live-view-page');
-                document.getElementById('camera-name').textContent = cameraName;
-                currentCameraId = cameraId;
-                
-                if (isViewer) {
-                    // Viewer mode - hide start stream button
-                    document.getElementById('start-live-camera').classList.add('hidden');
-                    document.getElementById('stop-live-camera').classList.add('hidden');
+                if (token && user) {
+                    authToken = token;
+                    currentUser = JSON.parse(user);
+                    
+                    document.getElementById('user-welcome').textContent = `Welcome, ${currentUser.name}`;
+                    UIManager.showDashboard();
                 } else {
-                    // Streamer mode - show start stream button
-                    document.getElementById('start-live-camera').classList.remove('hidden');
-                    document.getElementById('stop-live-camera').classList.add('hidden');
-                }
-                
-                this.updateLiveView();
-            },
-            
-            // Show events page
-            showEvents: function() {
-                this.showPage('events-page');
-                this.updateEventsList();
-            },
-            
-            // Show settings page
-            showSettings: function() {
-                this.showPage('settings-page');
-                this.updateSettingsForm();
-            },
-            
-            // Update dashboard with data - FIXED
-            updateDashboard: async function() {
-                try {
-                    // Get cameras and events
-                    const cameras = await API.getCameras();
-                    const events = await API.getEvents();
-                    const activeStreams = await CameraManager.getActiveStreams();
-                    
-                    console.log('Dashboard data - Cameras:', cameras);
-                    console.log('Dashboard data - Events:', events);
-                    console.log('Dashboard data - Active Streams:', activeStreams);
-                    
-                    // Update stats
-                    document.getElementById('active-cameras-count').textContent = cameras.length;
-                    
-                    const today = new Date().toDateString();
-                    const todayEvents = events.filter(event => {
-                        const eventDate = new Date(event.timestamp).toDateString();
-                        return eventDate === today;
-                    });
-                    document.getElementById('events-today').textContent = todayEvents.length;
-                    
-                    // Calculate total hours recorded (simulated)
-                    const totalHours = cameras.length * 24 + activeStreams.length * 2;
-                    document.getElementById('total-hours').textContent = totalHours;
-                    
-                    // Update recent events
-                    const recentEventsContainer = document.getElementById('recent-events');
-                    recentEventsContainer.innerHTML = '';
-                    
-                    const recentEvents = events.slice(0, 5);
-                    recentEvents.forEach(event => {
-                        const eventElement = document.createElement('div');
-                        eventElement.className = 'event-item';
-                        
-                        const eventDate = new Date(event.timestamp).toLocaleString();
-                        eventElement.innerHTML = `
-                            <h4>${event.type}</h4>
-                            <p>${event.description}</p>
-                            <div class="event-time">${eventDate}</div>
-                        `;
-                        
-                        recentEventsContainer.appendChild(eventElement);
-                    });
-                } catch (error) {
-                    console.error('Error updating dashboard:', error);
+                    UIManager.showLogin();
                 }
             },
             
-            // Update cameras list - FIXED
-            updateCamerasList: async function() {
+            // Login user
+            login: async function(email, password) {
                 try {
-                    const cameras = await API.getCameras();
-                    const activeStreams = await CameraManager.getActiveStreams();
+                    const result = await API.login(email, password);
                     
-                    console.log('Cameras list - Cameras:', cameras);
-                    console.log('Cameras list - Active Streams:', activeStreams);
-                    
-                    userCameras = cameras;
-                    
-                    const camerasList = document.getElementById('cameras-list');
-                    camerasList.innerHTML = '';
-                    
-                    if (cameras.length === 0) {
-                        camerasList.innerHTML = `
-                            <div style="grid-column: 1 / -1; text-align: center; padding: 3rem;">
-                                <i class="fas fa-camera fa-4x" style="color: #bdc3c7; margin-bottom: 1rem;"></i>
-                                <h3>No cameras added yet</h3>
-                                <p>Click "Add Camera" to set up your first security camera</p>
-                            </div>
-                        `;
-                        return;
+                    if (result.success) {
+                        authToken = result.token;
+                        currentUser = result.user;
+                        
+                        // Store in localStorage
+                        localStorage.setItem('securecam_token', authToken);
+                        localStorage.setItem('securecam_user', JSON.stringify(currentUser));
+                        
+                        document.getElementById('user-welcome').textContent = `Welcome, ${currentUser.name}`;
+                        UIManager.showDashboard();
+                        
+                        return { success: true };
+                    } else {
+                        return { success: false, error: result.error };
                     }
-                    
-                    cameras.forEach(camera => {
-                        const isStreaming = activeStreams.some(stream => stream.cameraId === camera.id);
-                        const activeStream = activeStreams.find(stream => stream.cameraId === camera.id);
-                        
-                        const cameraCard = document.createElement('div');
-                        cameraCard.className = 'camera-card';
-                        
-                        cameraCard.innerHTML = `
-                            <div class="camera-preview ${isStreaming ? 'live' : ''}">
-                                <i class="fas fa-camera fa-3x"></i>
-                                <p>${isStreaming ? 'LIVE STREAMING' : 'Camera Offline'}</p>
-                                ${isStreaming ? 
-                                    '<div class="device-status" style="position: absolute; bottom: 10px; left: 10px;">' +
-                                    '<i class="fas fa-circle status-online"></i>' +
-                                    '<span>WebRTC Active - Multi-device ready</span>' +
-                                    '</div>' : ''}
-                            </div>
-                            <div class="camera-info">
-                                <h3>${camera.name}</h3>
-                                <p>Location: ${camera.location}</p>
-                                <div class="device-status">
-                                    <i class="fas fa-circle ${isStreaming ? 'status-online' : 'status-offline'}"></i>
-                                    ${isStreaming ? 'Streaming Active' : 'Offline'}
-                                </div>
-                                <div class="camera-actions">
-                                    ${isStreaming ? 
-                                        `<button class="btn btn-primary btn-sm view-camera-btn" data-id="${camera.id}" data-stream="${activeStream.id}">
-                                            <i class="fas fa-eye"></i> Watch Live
-                                        </button>` :
-                                        `<button class="btn btn-primary btn-sm start-stream-btn" data-id="${camera.id}">
-                                            <i class="fas fa-broadcast-tower"></i> Start Stream
-                                        </button>`
-                                    }
-                                    <button class="btn btn-outline btn-sm edit-camera-btn" data-id="${camera.id}">
-                                        <i class="fas fa-cog"></i> Settings
-                                    </button>
-                                    <button class="btn btn-danger btn-sm delete-camera-btn" data-id="${camera.id}">
-                                        <i class="fas fa-trash"></i> Delete
-                                    </button>
-                                </div>
-                            </div>
-                        `;
-                        
-                        camerasList.appendChild(cameraCard);
-                    });
-                    
-                    // Add event listeners
-                    document.querySelectorAll('.start-stream-btn').forEach(btn => {
-                        btn.addEventListener('click', (e) => {
-                            const cameraId = e.target.closest('.start-stream-btn').dataset.id;
-                            const camera = userCameras.find(c => c.id == cameraId);
-                            if (camera) {
-                                UIManager.showLiveView(cameraId, camera.name, false);
-                            }
-                        });
-                    });
-                    
-                    document.querySelectorAll('.view-camera-btn').forEach(btn => {
-                        btn.addEventListener('click', async (e) => {
-                            const cameraId = e.target.closest('.view-camera-btn').dataset.id;
-                            const streamId = e.target.closest('.view-camera-btn').dataset.stream;
-                            const camera = userCameras.find(c => c.id == cameraId);
-                            
-                            if (camera) {
-                                UIManager.showLiveView(cameraId, camera.name, true);
-                                
-                                // Join the existing WebRTC stream
-                                const joinResult = await WebRTCManager.joinStream(streamId);
-                                if (!joinResult.success) {
-                                    alert('Failed to join stream: ' + joinResult.error);
-                                }
-                            }
-                        });
-                    });
-
-                    // Add delete camera listeners
-                    document.querySelectorAll('.delete-camera-btn').forEach(btn => {
-                        btn.addEventListener('click', async (e) => {
-                            const cameraId = e.target.closest('.delete-camera-btn').dataset.id;
-                            const camera = userCameras.find(c => c.id == cameraId);
-                            
-                            if (camera && confirm(`Are you sure you want to delete "${camera.name}"?`)) {
-                                try {
-                                    await API.deleteCamera(cameraId);
-                                    this.updateCamerasList();
-                                    alert('Camera deleted successfully');
-                                } catch (error) {
-                                    alert('Error deleting camera: ' + error.message);
-                                }
-                            }
-                        });
-                    });
                 } catch (error) {
-                    console.error('Error updating cameras list:', error);
+                    return { success: false, error: error.message };
                 }
             },
-
-            // Update streams list
-            updateStreamsList: async function() {
+            
+            // Register user
+            register: async function(name, email, password) {
                 try {
-                    const activeStreams = await CameraManager.getActiveStreams();
-                    const cameras = await API.getCameras();
+                    const result = await API.register(name, email, password);
                     
-                    console.log('Streams list - Active Streams:', activeStreams);
-                    console.log('Streams list - Cameras:', cameras);
-                    
-                    const streamsList = document.getElementById('streams-list');
-                    streamsList.innerHTML = '';
-                    
-                    if (activeStreams.length === 0) {
-                        streamsList.innerHTML = `
-                            <div style="grid-column: 1 / -1; text-align: center; padding: 3rem;">
-                                <i class="fas fa-broadcast-tower fa-4x" style="color: #bdc3c7; margin-bottom: 1rem;"></i>
-                                <h3>No active streams</h3>
-                                <p>Start a stream from "My Cameras" to view it here</p>
-                            </div>
-                        `;
-                        return;
+                    if (result.success) {
+                        return { success: true };
+                    } else {
+                        return { success: false, error: result.error };
                     }
-                    
-                    activeStreams.forEach(stream => {
-                        const camera = cameras.find(c => c.id === stream.cameraId);
-                        if (camera) {
-                            const streamCard = document.createElement('div');
-                            streamCard.className = 'camera-card';
-                            
-                            streamCard.innerHTML = `
-                                <div class="camera-preview live">
-                                    <i class="fas fa-broadcast-tower fa-3x"></i>
-                                    <div class="device-status" style="position: absolute; bottom: 10px; left: 10px;">
-                                        <i class="fas fa-circle status-online"></i>
-                                        <span>LIVE - WebRTC Active</span>
-                                    </div>
-                                </div>
-                                <div class="camera-info">
-                                    <h3>${camera.name}</h3>
-                                    <p>Location: ${camera.location}</p>
-                                    <p>Stream ID: ${stream.id}</p>
-                                    <div class="device-status">
-                                        <i class="fas fa-circle status-online"></i>
-                                        Streaming since ${new Date(stream.startedAt).toLocaleTimeString()}
-                                    </div>
-                                    <div class="camera-actions">
-                                        <button class="btn btn-primary btn-sm watch-stream-btn" data-stream="${stream.id}" data-camera="${camera.id}" data-name="${camera.name}">
-                                            <i class="fas fa-eye"></i> Watch Live
-                                        </button>
-                                    </div>
-                                </div>
-                            `;
-                            
-                            streamsList.appendChild(streamCard);
-                        }
-                    });
-                    
-                    // Add event listeners to watch buttons
-                    document.querySelectorAll('.watch-stream-btn').forEach(btn => {
-                        btn.addEventListener('click', async (e) => {
-                            const streamId = e.target.closest('.watch-stream-btn').dataset.stream;
-                            const cameraId = e.target.closest('.watch-stream-btn').dataset.camera;
-                            const cameraName = e.target.closest('.watch-stream-btn').dataset.name;
-                            
-                            UIManager.showLiveView(cameraId, cameraName, true);
-                            
-                            // Join the existing WebRTC stream
-                            const joinResult = await WebRTCManager.joinStream(streamId);
-                            if (!joinResult.success) {
-                                alert('Failed to join stream: ' + joinResult.error);
-                            }
-                        });
-                    });
                 } catch (error) {
-                    console.error('Error updating streams list:', error);
+                    return { success: false, error: error.message };
                 }
             },
             
-            // Update live view
-            updateLiveView: function() {
-                // Reset stream status
-                document.getElementById('stream-status').textContent = 'Ready to connect';
-                document.getElementById('stream-uptime').textContent = '--';
-                document.getElementById('stream-latency').textContent = '--';
-                document.getElementById('connection-type').textContent = 'WebRTC P2P';
+            // Logout user
+            logout: function() {
+                authToken = null;
+                currentUser = null;
                 
-                // Clear snapshots
-                document.getElementById('live-snapshots-container').innerHTML = '';
+                localStorage.removeItem('securecam_token');
+                localStorage.removeItem('securecam_user');
                 
-                // Reset video elements
-                const videoElement = document.getElementById('camera-feed');
-                const placeholderElement = document.getElementById('camera-placeholder');
-                
-                videoElement.srcObject = null;
-                videoElement.classList.add('hidden');
-                placeholderElement.classList.remove('hidden');
-            },
-            
-            // Update events list - FIXED
-            updateEventsList: async function() {
-                try {
-                    const events = await API.getEvents();
-                    console.log('Events list data:', events);
-                    
-                    userEvents = events;
-                    
-                    const eventsList = document.getElementById('events-list');
-                    eventsList.innerHTML = '';
-                    
-                    if (events.length === 0) {
-                        eventsList.innerHTML = `
-                            <div style="text-align: center; padding: 3rem;">
-                                <i class="fas fa-calendar-times fa-4x" style="color: #bdc3c7; margin-bottom: 1rem;"></i>
-                                <h3>No events recorded yet</h3>
-                                <p>Events will appear here when your cameras detect activity</p>
-                            </div>
-                        `;
-                        return;
-                    }
-                    
-                    events.forEach(event => {
-                        const eventElement = document.createElement('div');
-                        eventElement.className = 'event-item';
-                        
-                        const eventDate = new Date(event.timestamp).toLocaleString();
-                        eventElement.innerHTML = `
-                            <h4>${event.type}</h4>
-                            <p>${event.description}</p>
-                            <div class="event-time">${eventDate}</div>
-                        `;
-                        
-                        eventsList.appendChild(eventElement);
-                    });
-                } catch (error) {
-                    console.error('Error updating events list:', error);
-                }
-            },
-            
-            // Update settings form
-            updateSettingsForm: function() {
-                if (currentUser) {
-                    document.getElementById('settings-name').value = currentUser.name || '';
-                    document.getElementById('settings-email').value = currentUser.email || '';
-                }
-            },
-            
-            // Show alert message
-            showAlert: function(message, type = 'error', containerId = null) {
-                const alertDiv = document.createElement('div');
-                alertDiv.className = `alert alert-${type}`;
-                alertDiv.textContent = message;
-                
-                if (containerId) {
-                    const container = document.getElementById(containerId);
-                    container.innerHTML = '';
-                    container.appendChild(alertDiv);
-                    container.classList.remove('hidden');
-                }
-                
-                return alertDiv;
-            },
-            
-            // Hide alert
-            hideAlert: function(containerId) {
-                const container = document.getElementById(containerId);
-                container.classList.add('hidden');
-            }
-        };
-
-        // Event Listeners
-        document.addEventListener('DOMContentLoaded', function() {
-            // Check if user is already logged in
-            const savedToken = localStorage.getItem('authToken');
-            const savedUser = localStorage.getItem('currentUser');
-            
-            if (savedToken && savedUser) {
-                authToken = savedToken;
-                currentUser = JSON.parse(savedUser);
-                document.getElementById('user-welcome').textContent = `Hello, ${currentUser.name}`;
-                UIManager.showDashboard();
-            } else {
                 UIManager.showLogin();
             }
+        };
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            // Check authentication status
+            AuthManager.checkAuth();
             
-            // Navigation
+            // Login form handler
+            document.getElementById('login-form').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const email = document.getElementById('login-email').value;
+                const password = document.getElementById('login-password').value;
+                
+                const result = await AuthManager.login(email, password);
+                
+                if (result.success) {
+                    // Login successful, UI will update automatically
+                } else {
+                    document.getElementById('login-alert').textContent = result.error || 'Login failed';
+                    document.getElementById('login-alert').classList.remove('hidden');
+                }
+            });
+            
+            // Register form handler
+            document.getElementById('register-form').addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const name = document.getElementById('register-name').value;
+                const email = document.getElementById('register-email').value;
+                const password = document.getElementById('register-password').value;
+                const confirmPassword = document.getElementById('register-confirm').value;
+                
+                // Validate passwords match
+                if (password !== confirmPassword) {
+                    document.getElementById('register-alert').textContent = 'Passwords do not match';
+                    document.getElementById('register-alert').classList.remove('hidden');
+                    return;
+                }
+                
+                const result = await AuthManager.register(name, email, password);
+                
+                if (result.success) {
+                    document.getElementById('register-alert').classList.add('hidden');
+                    document.getElementById('register-success').classList.remove('hidden');
+                    document.getElementById('register-form').reset();
+                    
+                    // Switch to login after a delay
+                    setTimeout(() => {
+                        UIManager.showLogin();
+                    }, 2000);
+                } else {
+                    document.getElementById('register-alert').textContent = result.error || 'Registration failed';
+                    document.getElementById('register-alert').classList.remove('hidden');
+                }
+            });
+            
+            // Navigation handlers
             document.querySelectorAll('.nav-link').forEach(link => {
                 link.addEventListener('click', function(e) {
                     e.preventDefault();
@@ -2030,126 +2032,16 @@
                 UIManager.showLogin();
             });
             
-            // Login form
-            document.getElementById('login-form').addEventListener('submit', async function(e) {
-                e.preventDefault();
-                
-                const email = document.getElementById('login-email').value;
-                const password = document.getElementById('login-password').value;
-                
-                try {
-                    const result = await API.login(email, password);
-                    
-                    if (result.success) {
-                        authToken = result.token;
-                        currentUser = result.user;
-                        
-                        // Save to localStorage
-                        localStorage.setItem('authToken', authToken);
-                        localStorage.setItem('currentUser', JSON.stringify(currentUser));
-                        
-                        // Update UI
-                        document.getElementById('user-welcome').textContent = `Hello, ${currentUser.name}`;
-                        UIManager.showDashboard();
-                    } else {
-                        UIManager.showAlert('Invalid email or password', 'error', 'login-alert');
-                    }
-                } catch (error) {
-                    UIManager.showAlert('Login failed: ' + error.message, 'error', 'login-alert');
-                }
-            });
-            
-            // Register form
-            document.getElementById('register-form').addEventListener('submit', async function(e) {
-                e.preventDefault();
-                
-                const name = document.getElementById('register-name').value;
-                const email = document.getElementById('register-email').value;
-                const password = document.getElementById('register-password').value;
-                const confirmPassword = document.getElementById('register-confirm').value;
-                
-                // Validate passwords match
-                if (password !== confirmPassword) {
-                    UIManager.showAlert('Passwords do not match', 'error', 'register-alert');
-                    return;
-                }
-                
-                try {
-                    const result = await API.register(name, email, password);
-                    
-                    if (result.success) {
-                        UIManager.hideAlert('register-alert');
-                        document.getElementById('register-success').classList.remove('hidden');
-                        
-                        // Clear form
-                        document.getElementById('register-form').reset();
-                        
-                        // Redirect to login after 2 seconds
-                        setTimeout(() => {
-                            UIManager.showLogin();
-                        }, 2000);
-                    } else {
-                        UIManager.showAlert(result.error || 'Registration failed', 'error', 'register-alert');
-                    }
-                } catch (error) {
-                    UIManager.showAlert('Registration failed: ' + error.message, 'error', 'register-alert');
-                }
-            });
-            
-            // Logout
+            // Logout handler
             document.getElementById('logout-btn').addEventListener('click', function() {
-                // Clear stored data
-                localStorage.removeItem('authToken');
-                localStorage.removeItem('currentUser');
-                
-                // Stop any active streams
-                CameraManager.stopCamera();
-                WebRTCManager.close();
-                
-                // Reset state
-                authToken = null;
-                currentUser = null;
-                currentCameraId = null;
-                currentStreamId = null;
-                
-                // Show login page
-                UIManager.showLogin();
+                AuthManager.logout();
             });
             
-            // Add camera button
+            // Camera setup navigation
             document.getElementById('add-camera-btn').addEventListener('click', function() {
                 UIManager.showCameraSetup();
             });
             
-            // Camera selection for mobile devices
-            document.querySelectorAll('.camera-option').forEach(option => {
-                option.addEventListener('click', function() {
-                    // Remove selected class from all options
-                    document.querySelectorAll('.camera-option').forEach(opt => {
-                        opt.classList.remove('selected');
-                    });
-                    
-                    // Add selected class to clicked option
-                    this.classList.add('selected');
-                    
-                    // Update selected camera
-                    CameraManager.selectedCamera = this.dataset.facing;
-                    
-                    // If camera is already running, switch cameras
-                    if (CameraManager.stream) {
-                        const videoElement = document.getElementById('setup-camera-feed');
-                        const placeholderElement = document.getElementById('setup-camera-placeholder');
-                        CameraManager.switchCamera(videoElement, placeholderElement, CameraManager.selectedCamera);
-                    }
-                });
-            });
-
-            // Show camera selection on mobile devices
-            if (/Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)) {
-                document.getElementById('camera-selection').style.display = 'flex';
-            }
-            
-            // Back to cameras from setup
             document.getElementById('back-to-cameras-from-setup').addEventListener('click', function() {
                 // Stop camera if running
                 const videoElement = document.getElementById('setup-camera-feed');
@@ -2159,7 +2051,7 @@
                 UIManager.showCameras();
             });
             
-            // Enhanced back to cameras - Don't stop streaming for viewers
+            // Enhanced back to cameras - Proper cleanup
             document.getElementById('back-to-cameras').addEventListener('click', function() {
                 const videoElement = document.getElementById('camera-feed');
                 const placeholderElement = document.getElementById('camera-placeholder');
@@ -2167,10 +2059,16 @@
                 if (WebRTCManager.isInitiator) {
                     // Streamer - stop everything
                     CameraManager.stopCamera(videoElement, placeholderElement);
+                    // Show streamer controls again
+                    document.getElementById('start-live-camera').classList.remove('hidden');
+                    document.getElementById('stop-live-camera').classList.add('hidden');
                 } else {
                     // Viewer - just disconnect but keep stream active
                     CameraManager.stopCameraOnly(videoElement, placeholderElement);
                     WebRTCManager.disconnectViewer();
+                    // Show placeholder for next time
+                    document.getElementById('camera-placeholder').classList.remove('hidden');
+                    document.getElementById('camera-feed').classList.add('hidden');
                 }
                 
                 UIManager.showCameras();
@@ -2181,7 +2079,7 @@
                 const videoElement = document.getElementById('setup-camera-feed');
                 const placeholderElement = document.getElementById('setup-camera-placeholder');
                 
-                const result = await CameraManager.startCamera(videoElement, placeholderElement, CameraManager.selectedCamera);
+                const result = await CameraManager.startCamera(videoElement, placeholderElement);
                 
                 if (result.success) {
                     document.getElementById('start-camera-btn').classList.add('hidden');
@@ -2206,83 +2104,7 @@
                 CameraManager.takeSnapshot(videoElement, 'snapshots-container');
             });
             
-            // FIXED: Camera creation and streaming - KEEP STREAMING ACTIVE
-            document.getElementById('start-streaming-btn').addEventListener('click', async function() {
-                const cameraName = document.getElementById('camera-name').value;
-                const cameraLocation = document.getElementById('camera-location').value;
-                const streamQuality = document.getElementById('stream-quality').value;
-                
-                if (!cameraName || !cameraLocation) {
-                    alert('Please enter camera name and location');
-                    return;
-                }
-
-                if (!CameraManager.stream) {
-                    alert('Please start the camera first');
-                    return;
-                }
-
-                // Show streaming status
-                const statusElement = document.getElementById('streaming-status');
-                statusElement.classList.remove('hidden');
-                statusElement.innerHTML = '<i class="fas fa-sync fa-spin"></i> Creating camera and setting up WebRTC streaming...';
-
-                try {
-                    // Create camera in backend
-                    const cameraResult = await API.createCamera(cameraName, cameraLocation, streamQuality);
-                    
-                    console.log('Camera creation result:', cameraResult);
-                    
-                    if (cameraResult.success) {
-                        const cameraId = cameraResult.camera.id;
-                        
-                        // Start WebRTC streaming - DON'T STOP THE CAMERA!
-                        const streamResult = await WebRTCManager.startStreaming(
-                            cameraId, 
-                            cameraName,
-                            CameraManager.stream // Keep using the same stream
-                        );
-                        
-                        if (streamResult.success) {
-                            statusElement.innerHTML = `<i class="fas fa-check-circle"></i> Camera "${cameraName}" created successfully! WebRTC streaming is now ACTIVE. Other devices can view this stream.`;
-                            statusElement.className = 'alert alert-success';
-                            
-                            // Create a stream started event
-                            await API.createEvent(
-                                cameraId, 
-                                'WebRTC Stream Started', 
-                                `WebRTC stream started for ${cameraName} in ${cameraLocation}`
-                            );
-                            
-                            // Clear form but KEEP CAMERA RUNNING
-                            document.getElementById('camera-name').value = '';
-                            document.getElementById('camera-location').value = '';
-                            document.getElementById('snapshots-container').innerHTML = '';
-                            
-                            // Redirect to cameras page after 3 seconds but KEEP STREAMING
-                            setTimeout(() => {
-                                statusElement.classList.add('hidden');
-                                UIManager.showCameras();
-                                
-                                // Show success message on cameras page
-                                alert(`Camera "${cameraName}" is now streaming! Other devices can view it in the "Live Streams" tab.`);
-                            }, 3000);
-                        } else {
-                            statusElement.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Camera created but streaming failed: ${streamResult.error}`;
-                            statusElement.className = 'alert alert-error';
-                        }
-                    } else {
-                        statusElement.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Error creating camera: ${cameraResult.error}`;
-                        statusElement.className = 'alert alert-error';
-                    }
-                } catch (error) {
-                    statusElement.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Error: ${error.message}`;
-                    statusElement.className = 'alert alert-error';
-                    console.error('Camera creation error:', error);
-                }
-            });
-            
-            // Live view controls
+            // Live view controls - FIXED
             document.getElementById('start-live-camera').addEventListener('click', async function() {
                 const videoElement = document.getElementById('camera-feed');
                 const placeholderElement = document.getElementById('camera-placeholder');
@@ -2304,6 +2126,7 @@
                             document.getElementById('stream-status').textContent = 'WebRTC Streaming Active';
                             document.getElementById('stream-id').textContent = streamResult.sessionId;
                             
+                            // Update UI for streamer
                             document.getElementById('start-live-camera').classList.add('hidden');
                             document.getElementById('stop-live-camera').classList.remove('hidden');
                             
@@ -2315,6 +2138,8 @@
                             );
                         } else {
                             alert('Failed to start WebRTC streaming: ' + streamResult.error);
+                            // Reset camera if streaming failed
+                            CameraManager.stopCamera(videoElement, placeholderElement);
                         }
                     }
                 } else {
@@ -2345,24 +2170,16 @@
                 }
             });
             
+            // Snapshot button in live view
             document.getElementById('take-snapshot').addEventListener('click', function() {
                 const videoElement = document.getElementById('camera-feed');
                 CameraManager.takeSnapshot(videoElement, 'live-snapshots-container');
-                
-                // Create snapshot event
-                const camera = userCameras.find(c => c.id == currentCameraId);
-                if (camera) {
-                    API.createEvent(
-                        currentCameraId, 
-                        'Snapshot Taken', 
-                        `Snapshot captured from ${camera.name}`
-                    );
-                }
             });
             
-            // Save settings
+            // Settings save
             document.getElementById('save-settings').addEventListener('click', function() {
                 alert('Settings saved successfully!');
+                // In a real app, you would send these to the server
             });
         });
     </script>

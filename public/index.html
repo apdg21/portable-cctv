@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SecureCam - Multi-Device CCTV Solution3</title>
+    <title>SecureCam - Multi-Device CCTV Solution</title>
     
     <!-- CSS Imports at the TOP -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -989,10 +989,10 @@
     </footer>
 
     <script>
-        // Change the API_BASE_URL at the top of the script section:
-const API_BASE_URL = window.location.hostname === 'localhost' 
-  ? 'http://localhost:3000/api' 
-  : '/api'; // Uses relative path when deployed
+        // API Base URL - Uses relative path when deployed to Render
+        const API_BASE_URL = window.location.hostname === 'localhost' 
+            ? 'http://localhost:3000/api' 
+            : '/api';
         
         // Application state
         let currentUser = null;
@@ -1143,6 +1143,13 @@ const API_BASE_URL = window.location.hostname === 'localhost'
             getWebRTCSessionCandidates: async function(sessionId) {
                 return this.request(`/webrtc/session/${sessionId}/candidates`);
             },
+
+            // NEW: Leave WebRTC session (cleanup)
+            leaveWebRTCSession: async function(sessionId) {
+                return this.request(`/webrtc/session/${sessionId}/leave`, {
+                    method: 'POST'
+                });
+            },
             
             // Event endpoints
             getEvents: async function() {
@@ -1158,7 +1165,7 @@ const API_BASE_URL = window.location.hostname === 'localhost'
             }
         };
 
-        // Enhanced WebRTC Manager with Complete ICE Exchange
+        // Enhanced WebRTC Manager with Complete ICE Exchange AND RECONNECTION FIXES
         const WebRTCManager = {
             peerConnection: null,
             isInitiator: false,
@@ -1280,19 +1287,24 @@ const API_BASE_URL = window.location.hostname === 'localhost'
                 }, 2000); // Poll every 2 seconds
             },
 
-            // Join stream (Viewer device) - Enhanced with reconnection
+            // Enhanced join stream with proper cleanup
             joinStream: async function(streamId) {
                 try {
+                    // ✅ FIX #3: Always create new RTCPeerConnection when reconnecting
+                    if (this.peerConnection) {
+                        console.log('🔄 Cleaning up previous peer connection for reconnection');
+                        this.peerConnection.close();
+                        this.peerConnection = null;
+                    }
+
                     this.sessionId = streamId;
                     this.isInitiator = false;
                     this.reconnectAttempts = 0;
                     
-                    // Initialize WebRTC as viewer
+                    // Initialize fresh WebRTC as viewer
                     this.initWebRTC(false);
                     
-                    console.log('Joining WebRTC stream:', streamId);
-                    
-                    // Update UI for viewer
+                    console.log('🔄 Joining WebRTC stream with fresh connection:', streamId);
                     this.updateViewerUI('Connecting to WebRTC stream...');
                     
                     // Start polling for streamer's offer
@@ -1541,6 +1553,64 @@ const API_BASE_URL = window.location.hostname === 'localhost'
                 }
             },
 
+            // Enhanced disconnect with cleanup
+            disconnectViewer: async function() {
+                // Notify backend that viewer is leaving
+                if (this.sessionId && authToken) {
+                    try {
+                        await API.leaveWebRTCSession(this.sessionId);
+                        console.log('✅ Notified backend of viewer departure');
+                    } catch (error) {
+                        console.log('Note: Could not notify backend of departure', error.message);
+                    }
+                }
+
+                if (this.peerConnection) {
+                    this.peerConnection.close();
+                    this.peerConnection = null;
+                }
+                
+                if (this.pollingInterval) {
+                    clearInterval(this.pollingInterval);
+                }
+                
+                this.stopConnectionMetrics();
+                
+                this.sessionId = null;
+                this.isInitiator = false;
+                this.streamStartTime = null;
+                this.reconnectAttempts = 0;
+                
+                console.log('✅ Viewer completely disconnected and cleaned up');
+            },
+
+            // Enhanced close (for streamer)
+            close: async function() {
+                if (this.peerConnection) {
+                    this.peerConnection.close();
+                    this.peerConnection = null;
+                }
+                
+                if (this.pollingInterval) {
+                    clearInterval(this.pollingInterval);
+                }
+                
+                this.stopConnectionMetrics();
+                
+                this.sessionId = null;
+                this.isInitiator = false;
+                this.currentCameraId = null;
+                this.streamStartTime = null;
+                this.isStreamingActive = false;
+                this.reconnectAttempts = 0;
+                
+                // Update UI
+                document.getElementById('streaming-role').textContent = 'Not Connected';
+                document.getElementById('streaming-role').style.background = 'rgba(0,0,0,0.7)';
+                
+                console.log('✅ Streamer completely disconnected and cleaned up');
+            },
+
             // Update viewer count display
             updateViewerCount: async function(count) {
                 if (this.isInitiator) {
@@ -1606,50 +1676,6 @@ const API_BASE_URL = window.location.hostname === 'localhost'
                 if (this.metricsInterval) {
                     clearInterval(this.metricsInterval);
                 }
-            },
-
-            // Close connection (for streamer - stops streaming completely)
-            close: function() {
-                if (this.peerConnection) {
-                    this.peerConnection.close();
-                    this.peerConnection = null;
-                }
-                
-                if (this.pollingInterval) {
-                    clearInterval(this.pollingInterval);
-                }
-                
-                this.stopConnectionMetrics();
-                
-                this.sessionId = null;
-                this.isInitiator = false;
-                this.currentCameraId = null;
-                this.streamStartTime = null;
-                this.isStreamingActive = false;
-                this.reconnectAttempts = 0;
-                
-                // Update UI
-                document.getElementById('streaming-role').textContent = 'Not Connected';
-                document.getElementById('streaming-role').style.background = 'rgba(0,0,0,0.7)';
-            },
-
-            // Disconnect viewer (but keep stream active for reconnection)
-            disconnectViewer: function() {
-                if (this.peerConnection) {
-                    this.peerConnection.close();
-                    this.peerConnection = null;
-                }
-                
-                if (this.pollingInterval) {
-                    clearInterval(this.pollingInterval);
-                }
-                
-                this.stopConnectionMetrics();
-                
-                this.sessionId = null;
-                this.isInitiator = false;
-                this.streamStartTime = null;
-                this.reconnectAttempts = 0;
             }
         };
 
@@ -2408,17 +2434,18 @@ const API_BASE_URL = window.location.hostname === 'localhost'
             });
             
             // Enhanced back to cameras - Don't stop streaming for viewers
-            document.getElementById('back-to-cameras').addEventListener('click', function() {
+            document.getElementById('back-to-cameras').addEventListener('click', async function() {
                 const videoElement = document.getElementById('camera-feed');
                 const placeholderElement = document.getElementById('camera-placeholder');
                 
                 if (WebRTCManager.isInitiator) {
                     // Streamer - stop everything
                     CameraManager.stopCamera(videoElement, placeholderElement);
+                    await WebRTCManager.close();
                 } else {
-                    // Viewer - just disconnect but keep stream active
+                    // Viewer - cleanup properly
                     CameraManager.stopCameraOnly(videoElement, placeholderElement);
-                    WebRTCManager.disconnectViewer();
+                    await WebRTCManager.disconnectViewer();
                 }
                 
                 UIManager.showCameras();
@@ -2614,6 +2641,53 @@ const API_BASE_URL = window.location.hostname === 'localhost'
             document.getElementById('save-settings').addEventListener('click', function() {
                 alert('Settings saved successfully!');
             });
+        });
+
+        // ✅ FIX #2: Cleanup when viewer leaves/closes page
+        window.addEventListener('beforeunload', async () => {
+            if (WebRTCManager.sessionId && !WebRTCManager.isInitiator) {
+                try {
+                    // Use sendBeacon for better reliability (works even when page is closing)
+                    const blob = new Blob([JSON.stringify({})], {type: 'application/json'});
+                    navigator.sendBeacon(
+                        `${API_BASE_URL}/webrtc/session/${WebRTCManager.sessionId}/leave`,
+                        blob
+                    );
+                    console.log('✅ Sent viewer leave notification via sendBeacon');
+                } catch (error) {
+                    // Fallback to fetch if sendBeacon fails
+                    try {
+                        await fetch(`${API_BASE_URL}/webrtc/session/${WebRTCManager.sessionId}/leave`, {
+                            method: 'POST',
+                            headers: {
+                                'Authorization': `Bearer ${authToken}`,
+                                'Content-Type': 'application/json'
+                            },
+                            keepalive: true // This helps with page unload
+                        });
+                        console.log('✅ Sent viewer leave notification via fetch');
+                    } catch (e) {
+                        console.log('Note: Could not send leave notification');
+                    }
+                }
+            }
+        });
+
+        // Also handle page visibility changes
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden && WebRTCManager.sessionId && !WebRTCManager.isInitiator) {
+                // Page is hidden, notify backend after a short delay
+                setTimeout(async () => {
+                    if (document.hidden) { // Still hidden after delay
+                        try {
+                            await API.leaveWebRTCSession(WebRTCManager.sessionId);
+                            console.log('✅ Notified backend of viewer departure (page hidden)');
+                        } catch (error) {
+                            console.log('Note: Could not send leave notification for hidden page');
+                        }
+                    }
+                }, 1000);
+            }
         });
     </script>
 </body>

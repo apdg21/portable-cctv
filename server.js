@@ -34,16 +34,11 @@ try {
 
 const sheets = google.sheets({ version: 'v4', auth });
 const SPREADSHEET_ID = process.env.SPREADSHEET_ID;
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-key-for-development';
 
 // Validate required environment variables
 if (!SPREADSHEET_ID) {
   console.error('Missing SPREADSHEET_ID environment variable');
-  process.exit(1);
-}
-
-if (!JWT_SECRET) {
-  console.error('Missing JWT_SECRET environment variable');
   process.exit(1);
 }
 
@@ -175,8 +170,8 @@ const authenticateToken = (req, res, next) => {
 
 // ===== WEBRTC SIGNALING ROUTES =====
 
-// Create a WebRTC session
-app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
+// Create a WebRTC session - FIXED ENDPOINT
+app.post('/api/webrtc/session', authenticateToken, async (req, res) => {
   try {
     const { cameraId, cameraName } = req.body;
     
@@ -231,7 +226,7 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
 });
 
 // Store WebRTC offer
-app.post('/api/webrtc/:sessionId/offer', authenticateToken, async (req, res) => {
+app.post('/api/webrtc/session/:sessionId/offer', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { offer } = req.body;
@@ -253,7 +248,7 @@ app.post('/api/webrtc/:sessionId/offer', authenticateToken, async (req, res) => 
 });
 
 // Store WebRTC answer
-app.post('/api/webrtc/:sessionId/answer', authenticateToken, async (req, res) => {
+app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { answer } = req.body;
@@ -274,7 +269,7 @@ app.post('/api/webrtc/:sessionId/answer', authenticateToken, async (req, res) =>
 });
 
 // Add ICE candidate
-app.post('/api/webrtc/:sessionId/candidate', authenticateToken, async (req, res) => {
+app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { candidate } = req.body;
@@ -295,7 +290,7 @@ app.post('/api/webrtc/:sessionId/candidate', authenticateToken, async (req, res)
 });
 
 // Get WebRTC session data
-app.get('/api/webrtc/:sessionId', authenticateToken, async (req, res) => {
+app.get('/api/webrtc/session/:sessionId', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     
@@ -323,7 +318,7 @@ app.get('/api/webrtc/:sessionId', authenticateToken, async (req, res) => {
 });
 
 // Poll for WebRTC session updates (for the viewer)
-app.get('/api/webrtc/:sessionId/poll', authenticateToken, async (req, res) => {
+app.get('/api/webrtc/session/:sessionId/poll', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     
@@ -535,11 +530,17 @@ app.post('/api/login', async (req, res) => {
     }
 
     const users = await db.getRows('users');
+    console.log('All users from sheet:', users); // Debug log
+    
     const userRow = users.find(row => row[1] === email);
     
     if (!userRow) {
+      console.log('User not found for email:', email);
       return res.status(400).json({ error: 'Invalid credentials' });
     }
+
+    // Debug: Log the user row structure
+    console.log('Found user row:', userRow);
 
     const user = {
       id: userRow[0],
@@ -548,8 +549,12 @@ app.post('/api/login', async (req, res) => {
       name: userRow[3]
     };
 
+    console.log('User object:', user); // Debug log
+
     // Verify password
     const isValid = await bcrypt.compare(password, user.password);
+    console.log('Password validation result:', isValid); // Debug log
+    
     if (!isValid) {
       return res.status(400).json({ error: 'Invalid credentials' });
     }

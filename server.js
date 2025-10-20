@@ -1,3 +1,5 @@
+[file name]: server.js
+[file content begin]
 const express = require('express');
 const cors = require('cors');
 const { google } = require('googleapis');
@@ -1087,60 +1089,72 @@ app.get('/api/events', authenticateToken, async (req, res) => {
 // Enhanced cleanup: Remove inactive viewers AND sessions
 setInterval(() => {
   const now = Date.now();
-  const viewerInactiveTimeout = 30 * 1000; // 30 seconds for viewers
-  const sessionInactiveTimeout = 5 * 60 * 1000; // 5 minutes for sessions
-  
+  const VIEWER_TIMEOUT = 30000; // 30 seconds
+  const SESSION_TIMEOUT = 60000; // 60 seconds
+
+  // Clean up inactive viewers
   for (const [sessionId, session] of webrtcSessions.entries()) {
-    // Clean up inactive viewers within active sessions
-    let removedViewers = 0;
     for (const [viewerId, lastActivity] of session.viewers.entries()) {
-      if (now - lastActivity > viewerInactiveTimeout) {
+      if (now - lastActivity > VIEWER_TIMEOUT) {
+        console.log(`🧹 Removing inactive viewer ${viewerId} from session ${sessionId}`);
         session.viewers.delete(viewerId);
         session.answers.delete(viewerId);
         session.candidates.delete(viewerId);
-        removedViewers++;
+        
+        // Update viewer count in active streams
+        const stream = activeStreams.get(sessionId);
+        if (stream) {
+          stream.viewerCount = session.viewers.size;
+        }
       }
     }
-    
-    if (removedViewers > 0) {
-      console.log(`🧹 Cleaned up ${removedViewers} inactive viewers from session: ${sessionId}`);
-      
-      // Update viewer count in active streams
-      const stream = activeStreams.get(sessionId);
-      if (stream) {
-        stream.viewerCount = session.viewers.size;
-      }
-    }
-    
-    // Clean up entire session if inactive
-    if (now - session.lastActivity > sessionInactiveTimeout) {
-      console.log(`🧹 Cleaning up inactive WebRTC session: ${sessionId}`);
+
+    // Clean up inactive sessions (no viewers for a while)
+    if (session.viewers.size === 0 && now - session.lastActivity > SESSION_TIMEOUT) {
+      console.log(`🧹 Removing inactive WebRTC session: ${sessionId}`);
       webrtcSessions.delete(sessionId);
       
       // Also remove from active streams
-      if (activeStreams.has(sessionId)) {
-        activeStreams.delete(sessionId);
+      activeStreams.delete(sessionId);
+    }
+  }
+
+  // Clean up inactive streams
+  for (const [streamId, stream] of activeStreams.entries()) {
+    if (stream.type === 'webrtc') {
+      // For WebRTC streams, check if session still exists
+      if (!webrtcSessions.has(streamId)) {
+        console.log(`🧹 Removing orphaned WebRTC stream: ${streamId}`);
+        activeStreams.delete(streamId);
       }
     }
   }
-}, 30000); // Run every 30 seconds
+}, 15000); // Run every 15 seconds
 
-// ===== 4. STATIC FILES (MUST COME AFTER ALL API ROUTES) =====
-app.use(express.static(__dirname));
+// ===== 4. STATIC FILES =====
+// Serve static files from the public folder
+app.use(express.static(path.join(__dirname, 'public')));
 
-// ===== 5. CATCH-ALL ROUTE (MUST BE VERY LAST) =====
+// Serve index.html for all other routes (SPA)
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Start server
+// ===== 5. ERROR HANDLING =====
+app.use((error, req, res, next) => {
+  console.error('Unhandled error:', error);
+  res.status(500).json({ 
+    error: 'Internal server error',
+    message: error.message 
+  });
+});
+
+// ===== 6. START SERVER =====
 app.listen(PORT, () => {
-  console.log(`🚀 SecureCam Fullstack running on port ${PORT}`);
-  console.log(`📍 Frontend: http://localhost:${PORT}`);
-  console.log(`🔗 Backend API: http://localhost:${PORT}/api`);
-  console.log(`🌐 WebRTC signaling enabled with viewer reconnection fixes`);
-  console.log(`📊 Active WebRTC Sessions: ${webrtcSessions.size}`);
-  console.log(`📹 Active Streams: ${activeStreams.size}`);
+  console.log(`🚀 SecureCam Fullstack Server running on port ${PORT}`);
+  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`📁 Serving static files from: ${path.join(__dirname, 'public')}`);
+  console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`🌐 Web interface: http://localhost:${PORT}`);
 });
-
-module.exports = app;
+[file content end]

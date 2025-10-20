@@ -4,6 +4,7 @@ const { google } = require('googleapis');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -11,6 +12,9 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Serve static files (frontend)
+app.use(express.static(__dirname));
 
 // Google Sheets setup
 let auth;
@@ -42,7 +46,9 @@ if (!SPREADSHEET_ID) {
   process.exit(1);
 }
 
-console.log('Server started successfully with Spreadsheet ID:', SPREADSHEET_ID);
+console.log('SecureCam fullstack server started successfully');
+console.log('Spreadsheet ID:', SPREADSHEET_ID);
+console.log('Environment:', process.env.NODE_ENV || 'development');
 
 // Store active streams in memory
 const activeStreams = new Map();
@@ -1035,8 +1041,9 @@ app.get('/api/events', authenticateToken, async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
-    message: 'SecureCam API is running',
+    message: 'SecureCam Fullstack is running',
     timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
     streamingEnabled: true,
     webrtcEnabled: true,
     activeSessions: webrtcSessions.size,
@@ -1044,30 +1051,19 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Serve frontend
-app.get('/', (req, res) => {
-  res.send(`
-    <html>
-      <head>
-        <title>SecureCam API</title>
-      </head>
-      <body>
-        <h1>SecureCam CCTV API</h1>
-        <p>API is running successfully with WebRTC streaming!</p>
-        <p>Use the frontend app to interact with this API.</p>
-        <p>Active WebRTC Sessions: ${webrtcSessions.size}</p>
-        <p>Active Streams: ${activeStreams.size}</p>
-      </body>
-    </html>
-  `);
+// Serve frontend for all other routes
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`SecureCam server running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Google Sheet ID: ${SPREADSHEET_ID}`);
-  console.log(`WebRTC signaling enabled with complete ICE exchange`);
+  console.log(`🚀 SecureCam Fullstack running on port ${PORT}`);
+  console.log(`📍 Frontend: http://localhost:${PORT}`);
+  console.log(`🔗 Backend API: http://localhost:${PORT}/api`);
+  console.log(`🌐 WebRTC signaling enabled with complete ICE exchange`);
+  console.log(`📊 Active WebRTC Sessions: ${webrtcSessions.size}`);
+  console.log(`📹 Active Streams: ${activeStreams.size}`);
 });
 
 module.exports = app;

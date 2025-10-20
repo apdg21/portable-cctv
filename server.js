@@ -190,7 +190,7 @@ function findWebRTCSessionByCameraId(cameraId) {
   return null;
 }
 
-// ===== ENHANCED WEBRTC SIGNALING ROUTES WITH MULTI-VIEWER SUPPORT =====
+// ===== ENHANCED WEBRTC SIGNALING ROUTES WITH COMPLETE ICE EXCHANGE =====
 
 // Create a WebRTC session - COMPATIBILITY ENDPOINT
 app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
@@ -386,6 +386,55 @@ app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (r
     res.json({ success: true });
   } catch (error) {
     console.error('Error adding ICE candidate:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// NEW: Get ICE candidates for streamer
+app.get('/api/webrtc/session/:sessionId/candidates', authenticateToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const session = webrtcSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'WebRTC session not found' });
+    }
+
+    // Get all candidates from all viewers
+    const allCandidates = [];
+    for (const [viewerId, candidates] of session.candidates.entries()) {
+      allCandidates.push(...candidates);
+    }
+
+    res.json({ 
+      success: true, 
+      candidates: allCandidates 
+    });
+  } catch (error) {
+    console.error('Error getting candidates:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// NEW: Get answers for streamer
+app.get('/api/webrtc/session/:sessionId/answers', authenticateToken, async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const session = webrtcSessions.get(sessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'WebRTC session not found' });
+    }
+
+    // Get all answers from viewers
+    const answers = Array.from(session.answers.values());
+
+    res.json({ 
+      success: true, 
+      answers 
+    });
+  } catch (error) {
+    console.error('Error getting answers:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1018,7 +1067,7 @@ app.listen(PORT, () => {
   console.log(`SecureCam server running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Google Sheet ID: ${SPREADSHEET_ID}`);
-  console.log(`WebRTC signaling enabled with multi-viewer support`);
+  console.log(`WebRTC signaling enabled with complete ICE exchange`);
 });
 
 module.exports = app;

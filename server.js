@@ -168,6 +168,28 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
+// Helper function to find WebRTC session by stream ID
+function findWebRTCSessionByStreamId(streamId) {
+  for (const [sessionId, session] of webrtcSessions.entries()) {
+    // Extract camera ID from stream ID format: stream-CAMERAID-timestamp
+    const cameraIdFromStream = streamId.replace('stream-', '').split('-')[0];
+    if (session.cameraId === cameraIdFromStream) {
+      return { sessionId, session };
+    }
+  }
+  return null;
+}
+
+// Helper function to find WebRTC session by camera ID
+function findWebRTCSessionByCameraId(cameraId) {
+  for (const [sessionId, session] of webrtcSessions.entries()) {
+    if (session.cameraId === cameraId) {
+      return { sessionId, session };
+    }
+  }
+  return null;
+}
+
 // ===== ENHANCED WEBRTC SIGNALING ROUTES WITH MULTI-VIEWER SUPPORT =====
 
 // Create a WebRTC session - COMPATIBILITY ENDPOINT
@@ -215,7 +237,7 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
       new Date().toISOString()
     ]);
 
-    console.log(`WebRTC session created: ${sessionId}`);
+    console.log(`WebRTC session created: ${sessionId} for camera: ${cameraId}`);
     
     res.json({ 
       success: true, 
@@ -368,13 +390,33 @@ app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (r
   }
 });
 
-// Enhanced WebRTC session data with viewer tracking
-app.get('/api/webrtc/session/:sessionId', authenticateToken, async (req, res) => {
+// Enhanced WebRTC session data with viewer tracking - FIXED to handle stream IDs
+app.get('/api/webrtc/session/:streamId', authenticateToken, async (req, res) => {
   try {
-    const { sessionId } = req.params;
+    const { streamId } = req.params;
     const viewerId = req.user.userId;
     
-    const session = webrtcSessions.get(sessionId);
+    let session = webrtcSessions.get(streamId);
+    let sessionId = streamId;
+    
+    // If not found by direct ID, try to find by stream ID
+    if (!session) {
+      const found = findWebRTCSessionByStreamId(streamId);
+      if (found) {
+        session = found.session;
+        sessionId = found.sessionId;
+      }
+    }
+    
+    // If still not found, try by camera ID
+    if (!session) {
+      const found = findWebRTCSessionByCameraId(streamId);
+      if (found) {
+        session = found.session;
+        sessionId = found.sessionId;
+      }
+    }
+    
     if (!session) {
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
@@ -406,13 +448,33 @@ app.get('/api/webrtc/session/:sessionId', authenticateToken, async (req, res) =>
   }
 });
 
-// Enhanced polling with viewer tracking
-app.get('/api/webrtc/session/:sessionId/poll', authenticateToken, async (req, res) => {
+// Enhanced polling with viewer tracking - FIXED to handle stream IDs
+app.get('/api/webrtc/session/:streamId/poll', authenticateToken, async (req, res) => {
   try {
-    const { sessionId } = req.params;
+    const { streamId } = req.params;
     const viewerId = req.user.userId;
     
-    const session = webrtcSessions.get(sessionId);
+    let session = webrtcSessions.get(streamId);
+    let sessionId = streamId;
+    
+    // If not found by direct ID, try to find by stream ID
+    if (!session) {
+      const found = findWebRTCSessionByStreamId(streamId);
+      if (found) {
+        session = found.session;
+        sessionId = found.sessionId;
+      }
+    }
+    
+    // If still not found, try by camera ID
+    if (!session) {
+      const found = findWebRTCSessionByCameraId(streamId);
+      if (found) {
+        session = found.session;
+        sessionId = found.sessionId;
+      }
+    }
+    
     if (!session) {
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
@@ -439,12 +501,32 @@ app.get('/api/webrtc/session/:sessionId/poll', authenticateToken, async (req, re
   }
 });
 
-// Get session statistics
-app.get('/api/webrtc/session/:sessionId/stats', authenticateToken, async (req, res) => {
+// Get session statistics - FIXED to handle stream IDs
+app.get('/api/webrtc/session/:streamId/stats', authenticateToken, async (req, res) => {
   try {
-    const { sessionId } = req.params;
+    const { streamId } = req.params;
     
-    const session = webrtcSessions.get(sessionId);
+    let session = webrtcSessions.get(streamId);
+    let sessionId = streamId;
+    
+    // If not found by direct ID, try to find by stream ID
+    if (!session) {
+      const found = findWebRTCSessionByStreamId(streamId);
+      if (found) {
+        session = found.session;
+        sessionId = found.sessionId;
+      }
+    }
+    
+    // If still not found, try by camera ID
+    if (!session) {
+      const found = findWebRTCSessionByCameraId(streamId);
+      if (found) {
+        session = found.session;
+        sessionId = found.sessionId;
+      }
+    }
+    
     if (!session) {
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
@@ -462,6 +544,30 @@ app.get('/api/webrtc/session/:sessionId/stats', authenticateToken, async (req, r
     });
   } catch (error) {
     console.error('Error getting session stats:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all active WebRTC sessions for user
+app.get('/api/webrtc/sessions', authenticateToken, async (req, res) => {
+  try {
+    const userSessions = [];
+    
+    for (const [sessionId, session] of webrtcSessions.entries()) {
+      if (session.owner === req.user.userId && session.isActive) {
+        userSessions.push({
+          sessionId,
+          cameraId: session.cameraId,
+          cameraName: session.cameraName,
+          viewerCount: session.viewers.size,
+          createdAt: session.createdAt
+        });
+      }
+    }
+    
+    res.json({ success: true, sessions: userSessions });
+  } catch (error) {
+    console.error('Error getting user sessions:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -504,7 +610,8 @@ app.post('/api/streams/start', authenticateToken, async (req, res) => {
       owner: req.user.userId,
       startedAt: new Date().toISOString(),
       isActive: true,
-      type: 'local'
+      type: 'webrtc', // Changed from 'local' to 'webrtc'
+      viewerCount: 0
     });
 
     // Log stream event
@@ -512,7 +619,7 @@ app.post('/api/streams/start', authenticateToken, async (req, res) => {
       Date.now().toString(),
       cameraId,
       'stream_started',
-      `Local stream started: ${cameraName || 'Camera'}`,
+      `WebRTC stream started: ${cameraName || 'Camera'}`,
       new Date().toISOString()
     ]);
 
@@ -526,9 +633,9 @@ app.post('/api/streams/start', authenticateToken, async (req, res) => {
         cameraId,
         cameraName: cameraName || 'Camera Stream',
         startedAt: new Date().toISOString(),
-        type: 'local'
+        type: 'webrtc'
       },
-      message: 'Stream session created! Camera is now streaming locally.'
+      message: 'WebRTC stream session created! Camera is now streaming.'
     });
   } catch (error) {
     console.error('Error starting stream:', error);
@@ -596,7 +703,7 @@ app.get('/api/streams/:id', authenticateToken, async (req, res) => {
 app.get('/api/streams', authenticateToken, async (req, res) => {
   try {
     const streams = Array.from(activeStreams.entries())
-      .filter(([id, stream]) => stream.isActive)
+      .filter(([id, stream]) => stream.isActive && stream.owner === req.user.userId)
       .map(([id, stream]) => ({
         id,
         cameraId: stream.cameraId,
@@ -882,7 +989,9 @@ app.get('/api/health', (req, res) => {
     message: 'SecureCam API is running',
     timestamp: new Date().toISOString(),
     streamingEnabled: true,
-    webrtcEnabled: true
+    webrtcEnabled: true,
+    activeSessions: webrtcSessions.size,
+    activeStreams: activeStreams.size
   });
 });
 
@@ -897,6 +1006,8 @@ app.get('/', (req, res) => {
         <h1>SecureCam CCTV API</h1>
         <p>API is running successfully with WebRTC streaming!</p>
         <p>Use the frontend app to interact with this API.</p>
+        <p>Active WebRTC Sessions: ${webrtcSessions.size}</p>
+        <p>Active Streams: ${activeStreams.size}</p>
       </body>
     </html>
   `);

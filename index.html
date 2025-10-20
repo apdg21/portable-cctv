@@ -3,9 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SecureCam - Multi-Device CCTV Solution1</title>
+    <title>SecureCam - Multi-Device CCTV Solution2</title>
+    
+    <!-- CSS Imports at the TOP -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
     <style>
+        /* CSS Variables */
         :root {
             --primary: #2c3e50;
             --secondary: #3498db;
@@ -807,7 +811,7 @@
                 </div>
                 
                 <div class="camera-preview-setup">
-                    <video id="setup-camera-feed" autoplay playsinline class="hidden"></video>
+                    <video id="setup-camera-feed" autoplay playsinline muted class="hidden"></video>
                     <div id="setup-camera-placeholder">
                         <i class="fas fa-camera fa-5x"></i>
                         <p style="margin-top: 10px;">Camera feed will appear here</p>
@@ -872,7 +876,7 @@
             
             <div class="live-container">
                 <div class="video-container">
-                    <video id="camera-feed" autoplay playsinline class="hidden"></video>
+                    <video id="camera-feed" autoplay playsinline muted class="hidden"></video>
                     <div id="camera-placeholder">
                         <i class="fas fa-video fa-5x"></i>
                         <p style="margin-top: 10px;" id="placeholder-text">Connecting to stream...</p>
@@ -1248,7 +1252,10 @@
                     pc.ontrack = (event) => {
                         if (event.streams && event.streams[0]) {
                             videoElement.srcObject = event.streams[0];
-                            videoElement.play().catch(e => console.log('Preview play error:', e));
+                            // Use safe play with error handling
+                            videoElement.play().catch(e => {
+                                console.log('Preview play warning:', e.name);
+                            });
                         }
                     };
 
@@ -1314,14 +1321,17 @@
                 this.peerConnection = new RTCPeerConnection(configuration);
                 this.isInitiator = isInitiator;
 
-                // Set up event handlers
+                // Set up event handlers with null checks
                 this.peerConnection.onicecandidate = (event) => {
-                    if (event.candidate && this.sessionId) {
+                    if (event.candidate && this.sessionId && this.peerConnection) {
                         API.sendWebRTCCandidate(this.sessionId, event.candidate);
                     }
                 };
 
                 this.peerConnection.onconnectionstatechange = () => {
+                    // Add null check to prevent errors
+                    if (!this.peerConnection) return;
+                    
                     const state = this.peerConnection.connectionState;
                     console.log('WebRTC connection state:', state);
                     
@@ -1376,19 +1386,23 @@
                             // Update UI
                             document.getElementById('stream-status').textContent = 'Stream connected';
                             
-                            // Ensure video plays
-                            videoElement.play().catch(e => console.log('Video play error:', e));
+                            // Ensure video plays with error handling
+                            videoElement.play().catch(e => {
+                                console.log('Video play warning:', e.name);
+                            });
                         }
                     }
                 };
 
-                // Handle ICE connection state
+                // Handle ICE connection state with null checks
                 this.peerConnection.oniceconnectionstatechange = () => {
+                    if (!this.peerConnection) return;
                     const state = this.peerConnection.iceConnectionState;
                     console.log('ICE connection state:', state);
                 };
 
                 this.peerConnection.onsignalingstatechange = () => {
+                    if (!this.peerConnection) return;
                     console.log('Signaling state:', this.peerConnection.signalingState);
                 };
             },

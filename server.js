@@ -1,5 +1,3 @@
-[file name]: server.js
-[file content begin]
 const express = require('express');
 const cors = require('cors');
 const { google } = require('googleapis');
@@ -1157,4 +1155,3 @@ app.listen(PORT, () => {
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🌐 Web interface: http://localhost:${PORT}`);
 });
-[file content end]

@@ -989,8 +989,10 @@
     </footer>
 
     <script>
-        // API Base URL - Pointing to your Render backend
-        const API_BASE_URL = 'https://portable-cctv.onrender.com/api';
+        // Change the API_BASE_URL at the top of the script section:
+const API_BASE_URL = window.location.hostname === 'localhost' 
+  ? 'http://localhost:3000/api' 
+  : '/api'; // Uses relative path when deployed
         
         // Application state
         let currentUser = null;

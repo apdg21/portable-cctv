@@ -170,7 +170,62 @@ const authenticateToken = (req, res, next) => {
 
 // ===== WEBRTC SIGNALING ROUTES =====
 
-// Create a WebRTC session - FIXED ENDPOINT
+// Create a WebRTC session - COMPATIBILITY ENDPOINT
+app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
+  try {
+    const { cameraId, cameraName } = req.body;
+    
+    if (!cameraId) {
+      return res.status(400).json({ error: 'Camera ID is required' });
+    }
+
+    const sessionId = uuidv4();
+    
+    // Create WebRTC session
+    webrtcSessions.set(sessionId, {
+      cameraId,
+      cameraName: cameraName || 'Camera Stream',
+      owner: req.user.userId,
+      createdAt: new Date().toISOString(),
+      offer: null,
+      answer: null,
+      candidates: [],
+      isActive: true
+    });
+
+    // Store stream info
+    activeStreams.set(sessionId, {
+      cameraId,
+      cameraName: cameraName || 'Camera Stream',
+      owner: req.user.userId,
+      startedAt: new Date().toISOString(),
+      isActive: true,
+      type: 'webrtc'
+    });
+
+    // Log stream event
+    await db.appendRow('events', [
+      Date.now().toString(),
+      cameraId,
+      'webrtc_session_created',
+      `WebRTC session created: ${cameraName || 'Camera'}`,
+      new Date().toISOString()
+    ]);
+
+    console.log(`WebRTC session created via compatibility endpoint: ${sessionId}`);
+    
+    res.json({ 
+      success: true, 
+      sessionId,
+      message: 'WebRTC session created successfully'
+    });
+  } catch (error) {
+    console.error('Error creating WebRTC session:', error);
+    res.status(500).json({ error: 'Failed to create WebRTC session: ' + error.message });
+  }
+});
+
+// Create a WebRTC session - NEW ENDPOINT
 app.post('/api/webrtc/session', authenticateToken, async (req, res) => {
   try {
     const { cameraId, cameraName } = req.body;

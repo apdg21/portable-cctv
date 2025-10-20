@@ -9,12 +9,15 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// ===== 1. MIDDLEWARE =====
 app.use(cors());
 app.use(express.json());
 
-// Serve static files (frontend)
-app.use(express.static(path.join(__dirname, 'public')));
+// Debug middleware to see incoming requests
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
 
 // Google Sheets setup
 let auth;
@@ -109,53 +112,6 @@ class GoogleSheetsDB {
 
 const db = new GoogleSheetsDB(sheets, SPREADSHEET_ID);
 
-// Initialize Google Sheets (run once)
-app.post('/api/init', async (req, res) => {
-  try {
-    // Create sheets if they don't exist
-    const sheetNames = ['users', 'cameras', 'events', 'snapshots'];
-    
-    for (const sheetName of sheetNames) {
-      try {
-        await sheets.spreadsheets.batchUpdate({
-          spreadsheetId: SPREADSHEET_ID,
-          resource: {
-            requests: [{
-              addSheet: {
-                properties: {
-                  title: sheetName
-                }
-              }
-            }]
-          }
-        });
-
-        // Add headers
-        const headers = getHeadersForSheet(sheetName);
-        await db.appendRow(sheetName, headers);
-        console.log(`Created sheet: ${sheetName}`);
-      } catch (error) {
-        // Sheet might already exist
-        console.log(`Sheet ${sheetName} might already exist`);
-      }
-    }
-
-    res.json({ message: 'Database initialized successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-function getHeadersForSheet(sheetName) {
-  const headers = {
-    users: ['id', 'email', 'password', 'name', 'createdAt'],
-    cameras: ['id', 'userId', 'name', 'location', 'streamId', 'quality', 'status', 'createdAt'],
-    events: ['id', 'cameraId', 'type', 'description', 'timestamp'],
-    snapshots: ['id', 'cameraId', 'imageUrl', 'timestamp', 'uploadedToCloud']
-  };
-  return headers[sheetName] || [];
-}
-
 // Middleware to verify JWT token
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -196,8 +152,420 @@ function findWebRTCSessionByCameraId(cameraId) {
   return null;
 }
 
-// ===== ENHANCED WEBRTC SIGNALING WITH VIEWER RECONNECTION FIXES =====
+function getHeadersForSheet(sheetName) {
+  const headers = {
+    users: ['id', 'email', 'password', 'name', 'createdAt'],
+    cameras: ['id', 'userId', 'name', 'location', 'streamId', 'quality', 'status', 'createdAt'],
+    events: ['id', 'cameraId', 'type', 'description', 'timestamp'],
+    snapshots: ['id', 'cameraId', 'imageUrl', 'timestamp', 'uploadedToCloud']
+  };
+  return headers[sheetName] || [];
+}
 
+// ===== 2. API ROUTES =====
+
+// ===== 2.1 HEALTH & TEST ROUTES =====
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    message: 'SecureCam Fullstack is running',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    streamingEnabled: true,
+    webrtcEnabled: true,
+    activeSessions: webrtcSessions.size,
+    activeStreams: activeStreams.size
+  });
+});
+
+app.get('/api/test', (req, res) => {
+  res.json({ 
+    success: true, 
+    message: 'API is working!',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// ===== 2.2 INIT ROUTE =====
+app.post('/api/init', async (req, res) => {
+  try {
+    // Create sheets if they don't exist
+    const sheetNames = ['users', 'cameras', 'events', 'snapshots'];
+    
+    for (const sheetName of sheetNames) {
+      try {
+        await sheets.spreadsheets.batchUpdate({
+          spreadsheetId: SPREADSHEET_ID,
+          resource: {
+            requests: [{
+              addSheet: {
+                properties: {
+                  title: sheetName
+                }
+              }
+            }]
+          }
+        });
+
+        // Add headers
+        const headers = getHeadersForSheet(sheetName);
+        await db.appendRow(sheetName, headers);
+        console.log(`Created sheet: ${sheetName}`);
+      } catch (error) {
+        // Sheet might already exist
+        console.log(`Sheet ${sheetName} might already exist`);
+      }
+    }
+
+    res.json({ message: 'Database initialized successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== 2.3 AUTH ROUTES =====
+app.post('/api/register', async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+
+    if (!email || !password || !name) {
+      return res.status(400).json({ error: 'Email, password, and name are required' });
+    }
+
+    // Check if user exists
+    const users = await db.getRows('users');
+    const existingUser = users.find(row => row[1] === email);
+    
+    if (existingUser) {
+      return res.status(400).json({ error: 'User already exists' });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Create user
+    const user = {
+      id: Date.now().toString(),
+      email,
+      password: hashedPassword,
+      name,
+      createdAt: new Date().toISOString()
+    };
+
+    await db.appendRow('users', Object.values(user));
+
+    // Generate token
+    const token = jwt.sign(
+      { userId: user.id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: { id: user.id, email: user.email, name: user.name }
+    });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    const users = await db.getRows('users');
+    console.log('All users from sheet:', users); // Debug log
+    
+    const userRow = users.find(row => row[1] === email);
+    
+    if (!userRow) {
+      console.log('User not found for email:', email);
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    // Debug: Log the user row structure
+    console.log('Found user row:', userRow);
+
+    const user = {
+      id: userRow[0],
+      email: userRow[1],
+      password: userRow[2],
+      name: userRow[3]
+    };
+
+    console.log('User object:', user); // Debug log
+
+    // Verify password
+    const isValid = await bcrypt.compare(password, user.password);
+    console.log('Password validation result:', isValid); // Debug log
+    
+    if (!isValid) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    // Generate token
+    const token = jwt.sign(
+      { userId: user.id, email: user.email },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: { id: user.id, email: user.email, name: user.name }
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== 2.4 CAMERA ROUTES =====
+app.post('/api/cameras', authenticateToken, async (req, res) => {
+  try {
+    const { name, location, quality } = req.body;
+    
+    if (!name || !location) {
+      return res.status(400).json({ error: 'Name and location are required' });
+    }
+
+    const camera = {
+      id: Date.now().toString(),
+      userId: req.user.userId,
+      name,
+      location,
+      streamId: `CAM-${Date.now()}`,
+      quality: quality || 'medium',
+      status: 'offline',
+      createdAt: new Date().toISOString()
+    };
+
+    await db.appendRow('cameras', Object.values(camera));
+
+    res.json({ success: true, camera });
+  } catch (error) {
+    console.error('Create camera error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/cameras', authenticateToken, async (req, res) => {
+  try {
+    const cameras = await db.getRows('cameras');
+    const userCameras = cameras
+      .filter(row => row[1] === req.user.userId && row[6] !== 'deleted')
+      .map(row => ({
+        id: row[0],
+        userId: row[1],
+        name: row[2],
+        location: row[3],
+        streamId: row[4],
+        quality: row[5],
+        status: row[6],
+        createdAt: row[7]
+      }));
+
+    res.json({ success: true, cameras: userCameras });
+  } catch (error) {
+    console.error('Get cameras error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete camera
+app.post('/api/cameras/:id/delete', authenticateToken, async (req, res) => {
+  try {
+    const cameraId = req.params.id;
+    
+    // Get all cameras
+    const cameras = await db.getRows('cameras');
+    const cameraToDelete = cameras.find(row => row[0] === cameraId && row[1] === req.user.userId);
+    
+    if (!cameraToDelete) {
+      return res.status(404).json({ error: 'Camera not found or not authorized' });
+    }
+
+    // Stop any active streams for this camera
+    for (const [streamId, stream] of activeStreams.entries()) {
+      if (stream.cameraId === cameraId) {
+        activeStreams.delete(streamId);
+      }
+    }
+
+    // Clean up WebRTC sessions
+    for (const [sessionId, session] of webrtcSessions.entries()) {
+      if (session.cameraId === cameraId) {
+        webrtcSessions.delete(sessionId);
+      }
+    }
+
+    // Mark as deleted by updating status
+    const cameraIndex = cameras.findIndex(row => row[0] === cameraId && row[1] === req.user.userId);
+    if (cameraIndex !== -1) {
+      cameras[cameraIndex][6] = 'deleted'; // Update status column
+      await db.updateRow('cameras', cameraIndex + 1, cameras[cameraIndex]);
+    }
+
+    // Log deletion event
+    await db.appendRow('events', [
+      Date.now().toString(),
+      cameraId,
+      'camera_deleted',
+      `Camera "${cameraToDelete[2]}" was deleted`,
+      new Date().toISOString()
+    ]);
+
+    console.log(`Camera marked as deleted: ${cameraId}`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Camera deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting camera:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== 2.5 STREAMING ROUTES =====
+app.post('/api/streams/start', authenticateToken, async (req, res) => {
+  try {
+    const { cameraId, cameraName } = req.body;
+    
+    if (!cameraId) {
+      return res.status(400).json({ error: 'Camera ID is required' });
+    }
+
+    const streamId = `stream-${cameraId}-${Date.now()}`;
+    
+    // Store stream info
+    activeStreams.set(streamId, {
+      cameraId,
+      cameraName: cameraName || 'Camera Stream',
+      owner: req.user.userId,
+      startedAt: new Date().toISOString(),
+      isActive: true,
+      type: 'webrtc', // Changed from 'local' to 'webrtc'
+      viewerCount: 0
+    });
+
+    // Log stream event
+    await db.appendRow('events', [
+      Date.now().toString(),
+      cameraId,
+      'stream_started',
+      `WebRTC stream started: ${cameraName || 'Camera'}`,
+      new Date().toISOString()
+    ]);
+
+    console.log(`Stream session created: ${streamId}`);
+    
+    res.json({ 
+      success: true, 
+      streamId,
+      streamInfo: {
+        id: streamId,
+        cameraId,
+        cameraName: cameraName || 'Camera Stream',
+        startedAt: new Date().toISOString(),
+        type: 'webrtc'
+      },
+      message: 'WebRTC stream session created! Camera is now streaming.'
+    });
+  } catch (error) {
+    console.error('Error starting stream:', error);
+    res.status(500).json({ error: 'Failed to start streaming session: ' + error.message });
+  }
+});
+
+// Stop a stream
+app.post('/api/streams/:id/stop', authenticateToken, async (req, res) => {
+  try {
+    const streamId = req.params.id;
+    const stream = activeStreams.get(streamId);
+    
+    if (stream && stream.owner === req.user.userId) {
+      // Also clean up WebRTC session if exists
+      webrtcSessions.forEach((session, sessionId) => {
+        if (session.cameraId === stream.cameraId) {
+          webrtcSessions.delete(sessionId);
+        }
+      });
+
+      // Log stream event
+      await db.appendRow('events', [
+        Date.now().toString(),
+        stream.cameraId,
+        'stream_stopped',
+        `Stream stopped: ${stream.cameraName}`,
+        new Date().toISOString()
+      ]);
+
+      activeStreams.delete(streamId);
+      console.log(`Stream stopped: ${streamId}`);
+      
+      res.json({ success: true, message: 'Stream stopped successfully' });
+    } else {
+      res.status(404).json({ error: 'Stream not found or not authorized' });
+    }
+  } catch (error) {
+    console.error('Error stopping stream:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get stream info
+app.get('/api/streams/:id', authenticateToken, async (req, res) => {
+  try {
+    const streamId = req.params.id;
+    const stream = activeStreams.get(streamId);
+    
+    if (stream && stream.isActive) {
+      res.json({ 
+        success: true, 
+        streamInfo: stream
+      });
+    } else {
+      res.status(404).json({ error: 'Stream not found or inactive' });
+    }
+  } catch (error) {
+    console.error('Error getting stream:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all active streams
+app.get('/api/streams', authenticateToken, async (req, res) => {
+  try {
+    const streams = Array.from(activeStreams.entries())
+      .filter(([id, stream]) => stream.isActive && stream.owner === req.user.userId)
+      .map(([id, stream]) => ({
+        id,
+        cameraId: stream.cameraId,
+        cameraName: stream.cameraName,
+        owner: stream.owner,
+        startedAt: stream.startedAt,
+        isActive: stream.isActive,
+        type: stream.type,
+        viewerCount: stream.viewerCount || 0
+      }));
+    
+    res.json({ success: true, streams });
+  } catch (error) {
+    console.error('Error getting streams:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== 2.6 WEBRTC ROUTES =====
 // Create a WebRTC session - COMPATIBILITY ENDPOINT
 app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
   try {
@@ -244,6 +612,64 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
     ]);
 
     console.log(`WebRTC session created: ${sessionId} for camera: ${cameraId}`);
+    
+    res.json({ 
+      success: true, 
+      sessionId,
+      message: 'WebRTC session created successfully'
+    });
+  } catch (error) {
+    console.error('Error creating WebRTC session:', error);
+    res.status(500).json({ error: 'Failed to create WebRTC session: ' + error.message });
+  }
+});
+
+// Create a WebRTC session - NEW ENDPOINT
+app.post('/api/webrtc/session', authenticateToken, async (req, res) => {
+  try {
+    const { cameraId, cameraName } = req.body;
+    
+    if (!cameraId) {
+      return res.status(400).json({ error: 'Camera ID is required' });
+    }
+
+    const sessionId = uuidv4();
+    
+    // Create WebRTC session with multi-viewer support
+    webrtcSessions.set(sessionId, {
+      cameraId,
+      cameraName: cameraName || 'Camera Stream',
+      owner: req.user.userId,
+      createdAt: new Date().toISOString(),
+      offer: null,
+      answers: new Map(), // Store multiple answers for multiple viewers
+      candidates: new Map(), // Store candidates per viewer
+      viewers: new Map(), // Track active viewers with last activity
+      isActive: true,
+      lastActivity: Date.now()
+    });
+
+    // Store stream info
+    activeStreams.set(sessionId, {
+      cameraId,
+      cameraName: cameraName || 'Camera Stream',
+      owner: req.user.userId,
+      startedAt: new Date().toISOString(),
+      isActive: true,
+      type: 'webrtc',
+      viewerCount: 0
+    });
+
+    // Log stream event
+    await db.appendRow('events', [
+      Date.now().toString(),
+      cameraId,
+      'webrtc_session_created',
+      `WebRTC session created: ${cameraName || 'Camera'}`,
+      new Date().toISOString()
+    ]);
+
+    console.log(`WebRTC session created: ${sessionId}`);
     
     res.json({ 
       success: true, 
@@ -611,6 +1037,53 @@ app.get('/api/webrtc/sessions', authenticateToken, async (req, res) => {
   }
 });
 
+// ===== 2.7 EVENT ROUTES =====
+app.post('/api/events', authenticateToken, async (req, res) => {
+  try {
+    const { cameraId, type, description } = req.body;
+    
+    if (!cameraId || !type) {
+      return res.status(400).json({ error: 'Camera ID and event type are required' });
+    }
+
+    const event = {
+      id: Date.now().toString(),
+      cameraId,
+      type,
+      description: description || '',
+      timestamp: new Date().toISOString()
+    };
+
+    await db.appendRow('events', Object.values(event));
+    res.json({ success: true, event });
+  } catch (error) {
+    console.error('Create event error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/events', authenticateToken, async (req, res) => {
+  try {
+    const events = await db.getRows('events');
+    const userEvents = events.map(row => ({
+      id: row[0],
+      cameraId: row[1],
+      type: row[2],
+      description: row[3],
+      timestamp: row[4]
+    }));
+
+    // Sort by timestamp descending (newest first)
+    userEvents.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    res.json({ success: true, events: userEvents });
+  } catch (error) {
+    console.error('Get events error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ===== 3. CLEANUP INTERVALS =====
 // Enhanced cleanup: Remove inactive viewers AND sessions
 setInterval(() => {
   const now = Date.now();
@@ -652,27 +1125,12 @@ setInterval(() => {
   }
 }, 30000); // Run every 30 seconds
 
-// ===== STREAMING ROUTES =====
-// ... [KEEP ALL YOUR EXISTING STREAMING, CAMERA, AUTH ROUTES EXACTLY THE SAME] ...
-// The rest of your routes remain unchanged - they're already correct
+// ===== 4. STATIC FILES (MUST COME AFTER ALL API ROUTES) =====
+app.use(express.static(__dirname));
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    message: 'SecureCam Fullstack is running',
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    streamingEnabled: true,
-    webrtcEnabled: true,
-    activeSessions: webrtcSessions.size,
-    activeStreams: activeStreams.size
-  });
-});
-
-// Serve frontend for all other routes
+// ===== 5. CATCH-ALL ROUTE (MUST BE VERY LAST) =====
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // Start server

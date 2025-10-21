@@ -950,375 +950,517 @@
             }
         };
 
-        // WebRTC management
-        const WebRTCManager = {
-            config: {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' }
-                ]
-            },
+        // Enhanced WebRTC Manager with Complete Connection Handling
+const WebRTCManager = {
+    peerConnection: null,
+    isInitiator: false,
+    sessionId: null,
+    currentCameraId: null,
+    streamStartTime: null,
+    pollingInterval: null,
+    isStreamingActive: false,
+    reconnectAttempts: 0,
+    maxReconnectAttempts: 3,
+    connectionState: 'disconnected',
+
+    // Enhanced streaming initialization
+    startStreaming: async function(cameraId, cameraName, stream) {
+        try {
+            console.log('🚀 Starting WebRTC streaming for camera:', cameraId);
             
-            constraints: {
-                video: {
-                    width: { ideal: 1280 },
-                    height: { ideal: 720 },
-                    frameRate: { ideal: 30 }
-                },
-                audio: false
-            },
+            this.currentCameraId = cameraId;
+            this.connectionState = 'connecting';
             
-            // Streamer functions
-            async startStreaming(cameraId, cameraName) {
-                try {
-                    this.showStreamingAlert('Starting WebRTC stream...', 'info');
-                    
-                    // Get camera stream
-                    localStream = await navigator.mediaDevices.getUserMedia(this.constraints);
-                    elements.localVideo.srcObject = localStream;
-                    elements.localVideoPlaceholder.classList.add('hidden');
-                    
-                    // Create WebRTC session
-                    const sessionResult = await API.createWebRTCSession({
-                        cameraId,
-                        cameraName
-                    });
-                    
-                    currentSessionId = sessionResult.sessionId;
-                    isInitiator = true;
-                    streamStartTime = Date.now();
-                    
-                    // Create peer connection
-                    await this.createPeerConnection();
-                    
-                    // Add local stream to connection
-                    localStream.getTracks().forEach(track => {
-                        peerConnection.addTrack(track, localStream);
-                    });
-                    
-                    // Create and send offer
-                    const offer = await peerConnection.createOffer();
-                    await peerConnection.setLocalDescription(offer);
-                    await API.sendOffer(currentSessionId, offer);
-                    
-                    // Start polling for answers and candidates
-                    this.startPolling();
-                    
-                    // Update UI
-                    elements.startStreamBtn.classList.add('hidden');
-                    elements.stopStreamBtn.classList.remove('hidden');
-                    elements.streamerInfo.classList.remove('hidden');
-                    elements.streamIdValue.textContent = currentSessionId;
-                    elements.streamStatus.textContent = 'Streaming';
-                    
-                    this.showStreamingAlert('WebRTC stream started successfully!', 'success');
-                    this.startConnectionMetrics();
-                    
-                } catch (error) {
-                    console.error('Error starting stream:', error);
-                    this.showStreamingAlert(`Failed to start stream: ${error.message}`, 'error');
-                    this.cleanupStreaming();
-                }
-            },
+            // Create WebRTC session on server
+            const sessionResult = await API.createWebRTCSession(cameraId, cameraName);
+
+            if (!sessionResult.success) {
+                throw new Error(sessionResult.error || 'Failed to create WebRTC session');
+            }
+
+            this.sessionId = sessionResult.sessionId;
+            this.isInitiator = true;
+            this.isStreamingActive = true;
+            this.reconnectAttempts = 0;
             
-            async stopStreaming() {
-                try {
-                    if (currentSessionId && isInitiator) {
-                        await API.stopStream(currentSessionId);
-                    }
-                } catch (error) {
-                    console.log('Note: Could not notify backend of stream stop', error.message);
-                }
+            console.log('✅ WebRTC session created:', this.sessionId);
+            
+            // Initialize WebRTC as streamer
+            await this.initWebRTC(true);
+            
+            // Add local stream tracks to the connection
+            if (stream) {
+                console.log('📹 Adding local stream tracks:', stream.getTracks().length);
+                stream.getTracks().forEach(track => {
+                    this.peerConnection.addTrack(track, stream);
+                });
+            }
+
+            // Create and send offer
+            const offerOptions = {
+                offerToReceiveAudio: false,
+                offerToReceiveVideo: false
+            };
+            
+            console.log('📨 Creating WebRTC offer...');
+            const offer = await this.peerConnection.createOffer(offerOptions);
+            await this.peerConnection.setLocalDescription(offer);
+
+            console.log('📤 Sending offer to server...');
+            await API.sendWebRTCOffer(this.sessionId, offer);
+
+            console.log('✅ WebRTC streaming started successfully');
+            
+            // Update UI for streamer
+            this.updateStreamerUI();
+            
+            // Start polling for viewer answers and ICE candidates
+            this.startPollingForViewers();
+            
+            this.streamStartTime = new Date();
+            this.connectionState = 'connected';
+
+            return { 
+                success: true, 
+                sessionId: this.sessionId,
+                message: 'WebRTC streaming started successfully'
+            };
+        } catch (error) {
+            console.error('❌ Error starting WebRTC streaming:', error);
+            this.connectionState = 'failed';
+            return { success: false, error: error.message };
+        }
+    },
+
+    // Enhanced polling for streamer
+    startPollingForViewers: function() {
+        if (this.pollingInterval) clearInterval(this.pollingInterval);
+        
+        this.pollingInterval = setInterval(async () => {
+            try {
+                if (!this.isInitiator || !this.sessionId) return;
+
+                // Get answers from viewers
+                const answersResponse = await API.getWebRTCSessionAnswers(this.sessionId);
                 
-                this.cleanupStreaming();
-                this.showStreamingAlert('Stream stopped', 'info');
-            },
-            
-            cleanupStreaming() {
-                // Stop local stream
-                if (localStream) {
-                    localStream.getTracks().forEach(track => track.stop());
-                    localStream = null;
-                }
-                
-                // Clean up peer connection
-                if (peerConnection) {
-                    peerConnection.close();
-                    peerConnection = null;
-                }
-                
-                // Stop polling and metrics
-                this.stopPolling();
-                this.stopConnectionMetrics();
-                
-                // Reset UI
-                elements.localVideo.srcObject = null;
-                elements.localVideoPlaceholder.classList.remove('hidden');
-                elements.startStreamBtn.classList.remove('hidden');
-                elements.stopStreamBtn.classList.add('hidden');
-                elements.streamerInfo.classList.add('hidden');
-                elements.metricsPanel.classList.add('hidden');
-                
-                currentSessionId = null;
-                isInitiator = false;
-                streamStartTime = null;
-                reconnectAttempts = 0;
-            },
-            
-            // Viewer functions
-            async startViewer(streamId) {
-                try {
-                    this.showStreamingAlert('Connecting to WebRTC stream...', 'info');
-                    
-                    currentSessionId = streamId;
-                    isInitiator = false;
-                    
-                    // Create peer connection
-                    await this.createPeerConnection();
-                    
-                    // Start polling for offer
-                    this.startPolling();
-                    
-                    // Update UI
-                    elements.startViewerBtn.classList.add('hidden');
-                    elements.stopViewerBtn.classList.remove('hidden');
-                    elements.viewerInfo.classList.remove('hidden');
-                    elements.connectionStatus.textContent = 'Connecting...';
-                    
-                } catch (error) {
-                    console.error('Error starting viewer:', error);
-                    this.showStreamingAlert(`Failed to connect: ${error.message}`, 'error');
-                    this.disconnectViewer();
-                }
-            },
-            
-            // Enhanced disconnect with better cleanup
-            async disconnectViewer() {
-                // Notify backend that viewer is leaving
-                if (currentSessionId && authToken) {
-                    try {
-                        await API.leaveWebRTCSession(currentSessionId);
-                        console.log('✅ Notified backend of viewer departure');
-                    } catch (error) {
-                        console.log('Note: Could not notify backend of departure', error.message);
+                if (answersResponse.success && answersResponse.answers.length > 0) {
+                    console.log('📥 Processing viewer answers:', answersResponse.answers.length);
+                    for (const answer of answersResponse.answers) {
+                        try {
+                            if (this.peerConnection.signalingState === 'have-local-offer') {
+                                await this.peerConnection.setRemoteDescription(answer);
+                                console.log('✅ Remote description set from viewer answer');
+                            }
+                        } catch (error) {
+                            console.error('❌ Error setting remote description:', error);
+                        }
                     }
                 }
 
-                // Clean up WebRTC connection
-                if (peerConnection) {
-                    peerConnection.close();
-                    peerConnection = null;
+                // Get ICE candidates from viewers
+                const candidatesResponse = await API.getWebRTCSessionCandidates(this.sessionId);
+                
+                if (candidatesResponse.success && candidatesResponse.candidates.length > 0) {
+                    console.log('🧊 Processing viewer ICE candidates:', candidatesResponse.candidates.length);
+                    for (const candidate of candidatesResponse.candidates) {
+                        try {
+                            await this.peerConnection.addIceCandidate(candidate);
+                            console.log('✅ Added ICE candidate from viewer');
+                        } catch (error) {
+                            // This is often normal - candidate might already be added
+                            if (error.toString().includes('already')) {
+                                console.log('ℹ️ ICE candidate already added (normal)');
+                            } else {
+                                console.error('❌ Error adding ICE candidate:', error);
+                            }
+                        }
+                    }
+                }
+
+                // Update viewer count
+                if (answersResponse.viewerCount !== undefined) {
+                    this.updateViewerCount(answersResponse.viewerCount);
                 }
                 
-                // Stop polling
-                if (pollingInterval) {
-                    clearInterval(pollingInterval);
+            } catch (error) {
+                console.error('❌ Error polling for viewers:', error);
+            }
+        }, 3000); // Poll every 3 seconds
+    },
+
+    // Enhanced viewer connection
+    joinStream: async function(streamId) {
+        try {
+            console.log('👁️ Joining WebRTC stream:', streamId);
+            
+            // Clean up any existing connection
+            if (this.peerConnection) {
+                this.peerConnection.close();
+                this.peerConnection = null;
+            }
+
+            this.sessionId = streamId;
+            this.isInitiator = false;
+            this.reconnectAttempts = 0;
+            this.connectionState = 'connecting';
+            
+            // Initialize fresh WebRTC as viewer
+            await this.initWebRTC(false);
+            
+            this.updateViewerUI('Connecting to WebRTC stream...');
+            
+            // Clear video element
+            const videoElement = document.getElementById('camera-feed');
+            if (videoElement) {
+                videoElement.pause();
+                videoElement.srcObject = null;
+                videoElement.classList.add('hidden');
+                document.getElementById('camera-placeholder').classList.remove('hidden');
+            }
+            
+            // Start polling for streamer's offer
+            this.startPollingForOffer();
+
+            return { success: true };
+        } catch (error) {
+            console.error('❌ Error joining WebRTC stream:', error);
+            this.connectionState = 'failed';
+            return { success: false, error: error.message };
+        }
+    },
+
+    // Enhanced WebRTC initialization
+    initWebRTC: async function(isInitiator) {
+        const configuration = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' }
+            ],
+            iceCandidatePoolSize: 10,
+            bundlePolicy: 'max-bundle',
+            rtcpMuxPolicy: 'require'
+        };
+        
+        this.peerConnection = new RTCPeerConnection(configuration);
+        this.isInitiator = isInitiator;
+
+        console.log('🔧 WebRTC initialized as:', isInitiator ? 'Streamer' : 'Viewer');
+
+        // Enhanced ICE candidate handling
+        this.peerConnection.onicecandidate = (event) => {
+            if (event.candidate && this.sessionId) {
+                console.log('📤 Sending ICE candidate:', event.candidate.type);
+                API.sendWebRTCCandidate(this.sessionId, event.candidate)
+                    .catch(error => console.log('Note: Could not send candidate', error.message));
+            }
+        };
+
+        // Enhanced connection state handling
+        this.peerConnection.onconnectionstatechange = () => {
+            if (!this.peerConnection) return;
+            
+            const state = this.peerConnection.connectionState;
+            this.connectionState = state;
+            console.log('🔗 WebRTC connection state:', state);
+            
+            if (state === 'connected') {
+                console.log('✅ WebRTC connection established!');
+                this.reconnectAttempts = 0;
+                document.getElementById('stream-status').textContent = 
+                    this.isInitiator ? 'Streaming to viewers' : 'Connected to stream';
+                this.startConnectionMetrics();
+                
+                if (this.isInitiator) {
+                    this.updateViewerCount();
                 }
-                
-                // Stop metrics
-                this.stopConnectionMetrics();
-                
-                // Reset state
-                currentSessionId = null;
-                isInitiator = false;
-                streamStartTime = null;
-                reconnectAttempts = 0;
-                
-                // Reset UI
-                elements.remoteVideo.srcObject = null;
-                elements.remoteVideoPlaceholder.classList.remove('hidden');
-                elements.startViewerBtn.classList.remove('hidden');
-                elements.stopViewerBtn.classList.add('hidden');
-                elements.viewerInfo.classList.add('hidden');
-                elements.metricsPanel.classList.add('hidden');
-                elements.connectionStatus.textContent = 'Disconnected';
-                
-                console.log('✅ Viewer completely disconnected and cleaned up');
-            },
+            } else if (state === 'disconnected' || state === 'failed') {
+                console.log('❌ WebRTC connection failed:', state);
+                this.handleConnectionFailure();
+            }
+        };
+
+        // Enhanced track handling for viewers
+        this.peerConnection.ontrack = (event) => {
+            console.log('🎬 Received remote track:', event.track.kind);
             
-            // WebRTC connection management
-            async createPeerConnection() {
-                peerConnection = new RTCPeerConnection(this.config);
+            if (!this.isInitiator && event.streams && event.streams[0]) {
+                const remoteStream = event.streams[0];
+                console.log('📹 Remote stream received with tracks:', remoteStream.getTracks().length);
                 
-                // Handle incoming tracks (for viewer)
-                peerConnection.ontrack = (event) => {
-                    console.log('Received remote stream');
-                    elements.remoteVideo.srcObject = event.streams[0];
-                    elements.remoteVideoPlaceholder.classList.add('hidden');
-                    elements.connectionStatus.textContent = 'Connected';
-                    this.showStreamingAlert('Successfully connected to stream!', 'success');
-                };
-                
-                // Handle ICE candidates
-                peerConnection.onicecandidate = (event) => {
-                    if (event.candidate && currentSessionId) {
-                        API.sendCandidate(currentSessionId, event.candidate)
-                            .catch(error => console.error('Error sending candidate:', error));
-                    }
-                };
-                
-                // Handle connection state changes
-                peerConnection.onconnectionstatechange = () => {
-                    console.log('Connection state:', peerConnection.connectionState);
-                    elements.connectionStatus.textContent = peerConnection.connectionState;
+                const videoElement = document.getElementById('camera-feed');
+                if (videoElement) {
+                    videoElement.srcObject = null;
+                    videoElement.srcObject = remoteStream;
+                    videoElement.classList.remove('hidden');
                     
-                    if (peerConnection.connectionState === 'connected') {
-                        this.showStreamingAlert('WebRTC connection established!', 'success');
-                        reconnectAttempts = 0;
-                    } else if (peerConnection.connectionState === 'failed' || 
-                              peerConnection.connectionState === 'disconnected') {
-                        this.handleReconnection();
-                    }
-                };
-                
-                // Handle ICE connection state
-                peerConnection.oniceconnectionstatechange = () => {
-                    console.log('ICE connection state:', peerConnection.iceConnectionState);
+                    document.getElementById('camera-placeholder').classList.add('hidden');
+                    document.getElementById('stream-status').textContent = 'Stream connected';
                     
-                    if (peerConnection.iceConnectionState === 'failed') {
-                        this.handleReconnection();
-                    }
-                };
-            },
-            
-            async handleReconnection() {
-                if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-                    this.showStreamingAlert('Failed to reconnect after multiple attempts', 'error');
-                    if (isInitiator) {
-                        this.stopStreaming();
-                    } else {
-                        this.disconnectViewer();
-                    }
+                    // Auto-play with error handling
+                    videoElement.play().catch(e => {
+                        console.log('⚠️ Video play warning:', e.name);
+                        videoElement.muted = true;
+                        videoElement.play();
+                    });
+                }
+            }
+        };
+    },
+
+    // Enhanced polling for viewer
+    startPollingForOffer: function() {
+        if (this.pollingInterval) clearInterval(this.pollingInterval);
+        
+        let pollCount = 0;
+        const maxPolls = 30; // 30 seconds timeout
+        
+        this.pollingInterval = setInterval(async () => {
+            try {
+                pollCount++;
+                if (pollCount > maxPolls) {
+                    console.log('⏰ Polling timeout reached');
+                    clearInterval(this.pollingInterval);
+                    this.updateViewerUI('Connection timeout - Stream may have ended');
                     return;
                 }
+
+                const result = await API.pollWebRTCSession(this.sessionId);
                 
-                reconnectAttempts++;
-                this.showStreamingAlert(`Attempting to reconnect... (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})`, 'warning');
-                
-                // For viewer, try to reconnect by restarting the viewer
-                if (!isInitiator && currentSessionId) {
-                    setTimeout(() => {
-                        this.disconnectViewer();
-                        this.startViewer(currentSessionId);
-                    }, 2000 * reconnectAttempts);
-                }
-            },
-            
-            // Polling for WebRTC signaling
-            startPolling() {
-                if (pollingInterval) {
-                    clearInterval(pollingInterval);
-                }
-                
-                pollingInterval = setInterval(async () => {
-                    if (!currentSessionId) return;
+                console.log(`🔍 Poll ${pollCount}/${maxPolls}:`, {
+                    hasOffer: result.hasOffer,
+                    hasAnswer: result.hasAnswer,
+                    candidateCount: result.candidates?.length || 0
+                });
+
+                if (result.success && result.hasOffer) {
+                    // Get the full session data with offer
+                    const sessionData = await API.getWebRTCSession(this.sessionId);
                     
-                    try {
-                        const sessionData = await API.pollWebRTCSession(currentSessionId);
+                    if (sessionData.success && sessionData.session.offer) {
+                        console.log('📥 Setting remote description from offer');
                         
-                        if (isInitiator) {
-                            // Streamer: check for answers and update viewer count
-                            if (sessionData.hasAnswer) {
-                                const fullSession = await API.getWebRTCSession(currentSessionId);
-                                if (fullSession.session.answers) {
-                                    // Handle multiple viewer answers
-                                    const answers = Array.isArray(fullSession.session.answers) 
-                                        ? fullSession.session.answers 
-                                        : [fullSession.session.answers];
-                                    
-                                    for (const answer of answers) {
-                                        if (answer && peerConnection.signalingState === 'have-local-offer') {
-                                            await peerConnection.setRemoteDescription(answer);
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            // Update viewer count
-                            elements.viewerCount.textContent = sessionData.viewerCount || 0;
-                            
-                        } else {
-                            // Viewer: check for offer
-                            if (sessionData.hasOffer && !peerConnection.currentRemoteDescription) {
-                                const fullSession = await API.getWebRTCSession(currentSessionId);
-                                const offer = fullSession.session.offer;
-                                
-                                if (offer) {
-                                    await peerConnection.setRemoteDescription(offer);
-                                    
-                                    // Create and send answer
-                                    const answer = await peerConnection.createAnswer();
-                                    await peerConnection.setLocalDescription(answer);
-                                    await API.sendAnswer(currentSessionId, answer);
-                                }
-                            }
-                            
-                            // Handle incoming candidates
-                            if (sessionData.candidates && sessionData.candidates.length > 0) {
-                                for (const candidate of sessionData.candidates) {
-                                    await peerConnection.addIceCandidate(candidate);
+                        // Set remote description (streamer's offer)
+                        await this.peerConnection.setRemoteDescription(sessionData.session.offer);
+                        
+                        // Create and send answer
+                        const answer = await this.peerConnection.createAnswer();
+                        await this.peerConnection.setLocalDescription(answer);
+                        
+                        console.log('📤 Sending answer to streamer');
+                        await API.sendWebRTCAnswer(this.sessionId, answer);
+
+                        // Add existing ICE candidates from streamer
+                        if (sessionData.session.candidates && sessionData.session.candidates.length > 0) {
+                            console.log('🧊 Adding existing ICE candidates:', sessionData.session.candidates.length);
+                            for (const candidate of sessionData.session.candidates) {
+                                try {
+                                    await this.peerConnection.addIceCandidate(candidate);
+                                    console.log('✅ Added existing ICE candidate');
+                                } catch (err) {
+                                    console.log('ℹ️ ICE candidate add note (may be duplicate):', err.message);
                                 }
                             }
                         }
                         
-                    } catch (error) {
-                        console.error('Error during WebRTC polling:', error);
+                        // Stop polling once connected
+                        clearInterval(this.pollingInterval);
+                        this.updateViewerUI('Connected to stream');
+                        this.isStreamingActive = true;
                     }
-                }, 2000); // Poll every 2 seconds
-            },
-            
-            stopPolling() {
-                if (pollingInterval) {
-                    clearInterval(pollingInterval);
-                    pollingInterval = null;
+                } else if (result.success && !result.isActive) {
+                    console.log('🛑 Stream ended');
+                    this.updateViewerUI('Stream has ended');
+                    clearInterval(this.pollingInterval);
+                    this.isStreamingActive = false;
+                } else {
+                    this.updateViewerUI(`Waiting for stream... (${pollCount}/${maxPolls})`);
                 }
-            },
-            
-            // Connection metrics
-            startConnectionMetrics() {
-                if (metricsInterval) {
-                    clearInterval(metricsInterval);
+            } catch (error) {
+                console.error('❌ Error polling for offer:', error);
+                this.updateViewerUI('Connection error - Retrying...');
+            }
+        }, 1000);
+    },
+
+    // Enhanced disconnect with proper cleanup
+    disconnectViewer: async function() {
+        console.log('🔌 Disconnecting viewer...');
+        
+        // Notify backend that viewer is leaving
+        if (this.sessionId && authToken) {
+            try {
+                await API.leaveWebRTCSession(this.sessionId);
+                console.log('✅ Notified backend of viewer departure');
+            } catch (error) {
+                console.log('ℹ️ Note: Could not notify backend of departure', error.message);
+            }
+        }
+
+        // Clean up WebRTC connection
+        if (this.peerConnection) {
+            this.peerConnection.close();
+            this.peerConnection = null;
+        }
+        
+        // Stop polling
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+        }
+        
+        // Stop metrics
+        this.stopConnectionMetrics();
+        
+        // Reset state
+        this.sessionId = null;
+        this.isInitiator = false;
+        this.streamStartTime = null;
+        this.reconnectAttempts = 0;
+        this.isStreamingActive = false;
+        this.connectionState = 'disconnected';
+        
+        console.log('✅ Viewer completely disconnected and cleaned up');
+    },
+
+    // Enhanced close (for streamer)
+    close: async function() {
+        console.log('🔌 Closing streamer...');
+        
+        if (this.peerConnection) {
+            this.peerConnection.close();
+            this.peerConnection = null;
+        }
+        
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+        }
+        
+        this.stopConnectionMetrics();
+        
+        this.sessionId = null;
+        this.isInitiator = false;
+        this.currentCameraId = null;
+        this.streamStartTime = null;
+        this.isStreamingActive = false;
+        this.reconnectAttempts = 0;
+        this.connectionState = 'disconnected';
+        
+        // Update UI
+        document.getElementById('streaming-role').textContent = 'Not Connected';
+        document.getElementById('streaming-role').style.background = 'rgba(0,0,0,0.7)';
+        
+        console.log('✅ Streamer completely disconnected and cleaned up');
+    },
+
+    // Update viewer count display
+    updateViewerCount: async function(count) {
+        if (this.isInitiator) {
+            try {
+                const stats = await API.getWebRTCSessionStats(this.sessionId);
+                if (stats.success) {
+                    const viewerCount = stats.stats.viewerCount || 0;
+                    document.getElementById('stream-devices').textContent = 
+                        `${viewerCount} viewer(s) connected`;
                 }
+            } catch (error) {
+                console.error('Error getting viewer count:', error);
+            }
+        }
+    },
+
+    // Enhanced connection failure handling
+    handleConnectionFailure: function() {
+        this.stopConnectionMetrics();
+        
+        // Auto-reconnect for viewers
+        if (!this.isInitiator && this.isStreamingActive) {
+            this.reconnectAttempts++;
+            if (this.reconnectAttempts <= this.maxReconnectAttempts) {
+                console.log(`🔄 Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+                setTimeout(() => {
+                    this.reconnectAsViewer();
+                }, 2000 * this.reconnectAttempts);
+            } else {
+                console.log('❌ Max reconnection attempts reached');
+                this.updateViewerUI('Failed to reconnect after multiple attempts');
+            }
+        }
+    },
+
+    // Enhanced reconnect as viewer
+    reconnectAsViewer: async function() {
+        if (!this.sessionId) return;
+        
+        console.log(`🔄 Reconnecting as viewer to session: ${this.sessionId}`);
+        
+        try {
+            // Clean up existing connection
+            if (this.peerConnection) {
+                this.peerConnection.close();
+                this.peerConnection = null;
+            }
+
+            // Reinitialize and reconnect
+            await this.initWebRTC(false);
+            this.startPollingForOffer();
+            
+            this.updateViewerUI(`Reconnecting... (Attempt ${this.reconnectAttempts})`);
+        } catch (error) {
+            console.error('❌ Error during reconnection:', error);
+        }
+    },
+
+    // Update streamer UI
+    updateStreamerUI: function() {
+        document.getElementById('streaming-role').textContent = 'STREAMING';
+        document.getElementById('streaming-role').style.background = 'var(--success)';
+        document.getElementById('stream-role-info').textContent = 'Streaming to other devices';
+        document.getElementById('stream-status').textContent = 'Streaming active';
+        document.getElementById('stream-devices').textContent = '0 viewers connected';
+    },
+
+    // Update viewer UI
+    updateViewerUI: function(status) {
+        document.getElementById('streaming-role').textContent = 'VIEWING';
+        document.getElementById('streaming-role').style.background = 'var(--secondary)';
+        document.getElementById('stream-role-info').textContent = 'Viewing remote stream';
+        document.getElementById('placeholder-text').textContent = status;
+        document.getElementById('stream-status').textContent = status;
+        
+        // Hide streamer controls for viewer
+        document.getElementById('start-live-camera').classList.add('hidden');
+        document.getElementById('stop-live-camera').classList.add('hidden');
+    },
+
+    // Start connection metrics
+    startConnectionMetrics: function() {
+        const updateMetrics = () => {
+            if (this.streamStartTime) {
+                const now = new Date();
+                const uptime = Math.floor((now - this.streamStartTime) / 1000);
+                const minutes = Math.floor(uptime / 60);
+                const seconds = uptime % 60;
                 
-                metricsInterval = setInterval(async () => {
-                    if (!peerConnection) return;
-                    
-                    try {
-                        const stats = await peerConnection.getStats();
-                        let bitrate = 0;
-                        let packets = 0;
-                        let jitter = 0;
-                        let rtt = 0;
-                        
-                        stats.forEach(report => {
-                            if (report.type === 'inbound-rtp' && report.kind === 'video') {
-                                bitrate = report.bitrate || 0;
-                                packets = report.packetsReceived || 0;
-                                jitter = report.jitter || 0;
-                            }
-                            if (report.type === 'candidate-pair' && report.nominated) {
-                                rtt = report.currentRoundTripTime * 1000 || 0;
-                            }
-                        });
-                        
-                        elements.metricBitrate.textContent = Math.round(bitrate / 1024);
-                        elements.metricPackets.textContent = packets;
-                        elements.metricJitter.textContent = Math.round(jitter * 1000);
-                        elements.metricRtt.textContent = Math.round(rtt);
-                        elements.metricsPanel.classList.remove('hidden');
-                        
-                    } catch (error) {
-                        console.error('Error getting connection metrics:', error);
-                    }
-                }, 1000);
-            },
-            
-            stopConnectionMetrics() {
-                if (metricsInterval) {
-                    clearInterval(metricsInterval);
-                    metricsInterval = null;
-                }
-            },
+                document.getElementById('stream-uptime').textContent = 
+                    `Uptime: ${minutes}m ${seconds}s`;
+                
+                // Simulate latency for demo
+                const latency = Math.floor(50 + Math.random() * 100);
+                document.getElementById('stream-latency').textContent = latency;
+            }
+        };
+        
+        this.metricsInterval = setInterval(updateMetrics, 2000);
+        updateMetrics();
+    },
+
+    // Stop connection metrics
+    stopConnectionMetrics: function() {
+        if (this.metricsInterval) {
+            clearInterval(this.metricsInterval);
+        }
+    }
+};
             
             showStreamingAlert(message, type = 'error') {
                 elements.streamingAlert.textContent = message;

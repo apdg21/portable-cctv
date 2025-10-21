@@ -566,7 +566,7 @@ app.get('/api/streams', authenticateToken, async (req, res) => {
 });
 
 // ===== 2.6 WEBRTC ROUTES =====
-// Create a WebRTC session - COMPATIBILITY ENDPOINT
+// Enhanced WebRTC session creation with better error handling
 app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
   try {
     const { cameraId, cameraName } = req.body;
@@ -577,18 +577,26 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
 
     const sessionId = uuidv4();
     
-    // Create WebRTC session with multi-viewer support
+    console.log(`🆕 Creating WebRTC session ${sessionId} for camera ${cameraId}`);
+    
+    // Create WebRTC session with proper initialization
     webrtcSessions.set(sessionId, {
       cameraId,
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
       createdAt: new Date().toISOString(),
       offer: null,
-      answers: new Map(), // Store multiple answers for multiple viewers
-      candidates: new Map(), // Store candidates per viewer
-      viewers: new Map(), // Track active viewers with last activity
+      answers: new Map(),
+      candidates: new Map(),
+      viewers: new Map(),
       isActive: true,
-      lastActivity: Date.now()
+      lastActivity: Date.now(),
+      // Add session metadata for debugging
+      metadata: {
+        createdBy: req.user.userId,
+        userAgent: req.get('User-Agent'),
+        createdAt: new Date().toISOString()
+      }
     });
 
     // Store stream info
@@ -602,16 +610,7 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
       viewerCount: 0
     });
 
-    // Log stream event
-    await db.appendRow('events', [
-      Date.now().toString(),
-      cameraId,
-      'webrtc_session_created',
-      `WebRTC session created: ${cameraName || 'Camera'}`,
-      new Date().toISOString()
-    ]);
-
-    console.log(`WebRTC session created: ${sessionId} for camera: ${cameraId}`);
+    console.log(`✅ WebRTC session created: ${sessionId}`);
     
     res.json({ 
       success: true, 
@@ -619,7 +618,7 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
       message: 'WebRTC session created successfully'
     });
   } catch (error) {
-    console.error('Error creating WebRTC session:', error);
+    console.error('❌ Error creating WebRTC session:', error);
     res.status(500).json({ error: 'Failed to create WebRTC session: ' + error.message });
   }
 });
@@ -682,54 +681,61 @@ app.post('/api/webrtc/session', authenticateToken, async (req, res) => {
   }
 });
 
-// Store WebRTC offer
+// Enhanced offer storage with validation
 app.post('/api/webrtc/session/:sessionId/offer', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { offer } = req.body;
     
+    console.log(`📨 Storing offer for session: ${sessionId}`, offer?.type);
+    
     const session = webrtcSessions.get(sessionId);
     if (!session) {
+      console.log(`❌ Session not found: ${sessionId}`);
       return res.status(404).json({ error: 'WebRTC session not found' });
+    }
+
+    // Validate offer structure
+    if (!offer || !offer.type || !offer.sdp) {
+      console.log('❌ Invalid offer structure');
+      return res.status(400).json({ error: 'Invalid offer structure' });
     }
 
     session.offer = offer;
     session.lastActivity = Date.now();
     
-    console.log(`Offer stored for session: ${sessionId}`);
+    console.log(`✅ Offer stored for session: ${sessionId}`);
     res.json({ success: true });
   } catch (error) {
-    console.error('Error storing offer:', error);
+    console.error('❌ Error storing offer:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Enhanced answer storage for multiple viewers WITH PROPER RECONNECTION HANDLING
+// Enhanced answer storage with connection tracking
 app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { answer } = req.body;
     const viewerId = req.user.userId;
     
+    console.log(`📨 Storing answer from viewer ${viewerId} for session: ${sessionId}`);
+    
     const session = webrtcSessions.get(sessionId);
     if (!session) {
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
 
-    // ✅ FIX: Only reset if viewer was truly inactive, not just reconnecting
-    const viewerLastActivity = session.viewers.get(viewerId);
-    const now = Date.now();
-    
-    if (viewerLastActivity && (now - viewerLastActivity > 30000)) {
-      console.log(`🔄 Viewer ${viewerId} reconnecting after inactivity - resetting previous WebRTC data`);
-      session.answers.delete(viewerId);
-      session.candidates.delete(viewerId);
+    // Validate answer structure
+    if (!answer || !answer.type || !answer.sdp) {
+      console.log('❌ Invalid answer structure');
+      return res.status(400).json({ error: 'Invalid answer structure' });
     }
 
     // Store answer for this specific viewer
     session.answers.set(viewerId, answer);
-    session.viewers.set(viewerId, now); // Track last activity
-    session.lastActivity = now;
+    session.viewers.set(viewerId, Date.now());
+    session.lastActivity = Date.now();
     
     // Update viewer count in active streams
     const stream = activeStreams.get(sessionId);
@@ -740,33 +746,29 @@ app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req,
     console.log(`✅ Answer stored for viewer ${viewerId} in session: ${sessionId}`);
     res.json({ success: true });
   } catch (error) {
-    console.error('Error storing answer:', error);
+    console.error('❌ Error storing answer:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Enhanced candidate storage for multiple viewers WITH PROPER RECONNECTION HANDLING
+// Enhanced candidate storage with proper handling
 app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
     const { candidate } = req.body;
     const viewerId = req.user.userId;
     
+    console.log(`🧊 Storing ICE candidate from viewer ${viewerId} for session: ${sessionId}`);
+    
     const session = webrtcSessions.get(sessionId);
     if (!session) {
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
 
-    // ✅ FIX: Only clear candidates if viewer was marked as inactive/left
-    // Don't clear just because answer doesn't exist yet - they might arrive in any order
-    const viewerLastActivity = session.viewers.get(viewerId);
-    const now = Date.now();
-    
-    // If viewer was inactive for a while (more than 30 seconds), clear old data
-    if (viewerLastActivity && (now - viewerLastActivity > 30000)) {
-      console.log(`🔄 Viewer ${viewerId} reconnecting after inactivity - clearing old WebRTC data`);
-      session.answers.delete(viewerId);
-      session.candidates.delete(viewerId);
+    // Validate candidate structure
+    if (!candidate || !candidate.candidate) {
+      console.log('❌ Invalid candidate structure');
+      return res.status(400).json({ error: 'Invalid candidate structure' });
     }
 
     // Initialize candidates array for this viewer if it doesn't exist
@@ -776,18 +778,18 @@ app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (r
     
     // Add the candidate
     session.candidates.get(viewerId).push(candidate);
-    session.viewers.set(viewerId, now); // Update last activity
-    session.lastActivity = now;
+    session.viewers.set(viewerId, Date.now());
+    session.lastActivity = Date.now();
     
     console.log(`✅ ICE candidate added for viewer ${viewerId} in session: ${sessionId}`);
     res.json({ success: true });
   } catch (error) {
-    console.error('Error adding ICE candidate:', error);
+    console.error('❌ Error adding ICE candidate:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// ✅ FIX #2: Cleanup endpoint for when viewer leaves
+// ✅ Cleanup endpoint for when viewer leaves
 app.post('/api/webrtc/session/:sessionId/leave', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -816,7 +818,7 @@ app.post('/api/webrtc/session/:sessionId/leave', authenticateToken, async (req, 
   }
 });
 
-// Get ICE candidates for streamer
+// Get ICE candidates for streamer with enhanced logging
 app.get('/api/webrtc/session/:sessionId/candidates', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -832,6 +834,11 @@ app.get('/api/webrtc/session/:sessionId/candidates', authenticateToken, async (r
       allCandidates.push(...candidates);
     }
 
+    console.log(`📊 Streamer fetching candidates for session ${sessionId}:`, {
+      candidateCount: allCandidates.length,
+      viewersWithCandidates: session.candidates.size
+    });
+
     res.json({ 
       success: true, 
       candidates: allCandidates 
@@ -842,7 +849,7 @@ app.get('/api/webrtc/session/:sessionId/candidates', authenticateToken, async (r
   }
 });
 
-// Get answers for streamer
+// Get answers for streamer with enhanced logging
 app.get('/api/webrtc/session/:sessionId/answers', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -855,9 +862,15 @@ app.get('/api/webrtc/session/:sessionId/answers', authenticateToken, async (req,
     // Get all answers from viewers
     const answers = Array.from(session.answers.values());
 
+    console.log(`📊 Streamer fetching answers for session ${sessionId}:`, {
+      answerCount: answers.length,
+      viewerCount: session.viewers.size
+    });
+
     res.json({ 
       success: true, 
-      answers 
+      answers,
+      viewerCount: session.viewers.size
     });
   } catch (error) {
     console.error('Error getting answers:', error);
@@ -914,7 +927,13 @@ app.get('/api/webrtc/session/:streamId', authenticateToken, async (req, res) => 
         answer: viewerAnswer,
         candidates: viewerCandidates,
         isActive: session.isActive,
-        viewerCount: session.viewers.size
+        viewerCount: session.viewers.size,
+        // Add debugging info
+        debug: {
+          hasOffer: !!session.offer,
+          hasAnswer: !!viewerAnswer,
+          candidateCount: viewerCandidates.length
+        }
       }
     });
   } catch (error) {
@@ -951,6 +970,7 @@ app.get('/api/webrtc/session/:streamId/poll', authenticateToken, async (req, res
     }
     
     if (!session) {
+      console.log(`❌ WebRTC session not found: ${streamId}`);
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
 
@@ -958,20 +978,35 @@ app.get('/api/webrtc/session/:streamId/poll', authenticateToken, async (req, res
     session.viewers.set(viewerId, Date.now());
     session.lastActivity = Date.now();
 
-    // Check if viewer has already submitted an answer
-    const hasViewerAnswer = session.answers.has(viewerId);
+    // Get viewer-specific data
+    const viewerAnswer = session.answers.get(viewerId);
     const viewerCandidates = session.candidates.get(viewerId) || [];
 
-    res.json({ 
+    // Enhanced response with connection status
+    const response = {
       success: true, 
       hasOffer: !!session.offer,
-      hasAnswer: hasViewerAnswer,
+      hasAnswer: !!viewerAnswer,
       candidates: viewerCandidates,
       isActive: session.isActive,
-      viewerCount: session.viewers.size
+      viewerCount: session.viewers.size,
+      sessionInfo: {
+        sessionId: sessionId,
+        cameraName: session.cameraName,
+        createdAt: session.createdAt
+      }
+    };
+
+    console.log(`🔍 Polling response for viewer ${viewerId}:`, {
+      hasOffer: response.hasOffer,
+      hasAnswer: response.hasAnswer,
+      candidateCount: response.candidates.length,
+      viewerCount: response.viewerCount
     });
+
+    res.json(response);
   } catch (error) {
-    console.error('Error polling WebRTC session:', error);
+    console.error('❌ Error polling WebRTC session:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -1085,7 +1120,7 @@ app.get('/api/events', authenticateToken, async (req, res) => {
 
     // Sort by timestamp descending (newest first)
     userEvents.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-    
+
     res.json({ success: true, events: userEvents });
   } catch (error) {
     console.error('Get events error:', error);

@@ -1305,6 +1305,15 @@
                     console.log('🔄 Joining WebRTC stream with fresh connection:', streamId);
                     this.updateViewerUI('Connecting to WebRTC stream...');
                     
+                    // ✅ FIX: Clear video element before reconnecting
+                    const videoElement = document.getElementById('camera-feed');
+                    if (videoElement) {
+                        videoElement.pause();
+                        videoElement.srcObject = null;
+                        videoElement.classList.add('hidden');
+                        document.getElementById('camera-placeholder').classList.remove('hidden');
+                    }
+                    
                     // Start polling for streamer's offer
                     this.startPollingForOffer();
 
@@ -1352,7 +1361,7 @@
                 }
             },
 
-            // Enhanced WebRTC initialization
+            // Enhanced WebRTC initialization with better debugging
             initWebRTC: function(isInitiator) {
                 const configuration = {
                     iceServers: [
@@ -1401,6 +1410,33 @@
                     }
                 };
 
+                // Enhanced ICE connection state with better debugging
+                this.peerConnection.oniceconnectionstatechange = () => {
+                    if (!this.peerConnection) return;
+                    
+                    const state = this.peerConnection.iceConnectionState;
+                    console.log('🧊 ICE connection state changed to:', state);
+                    
+                    // Enhanced debugging for reconnection scenarios
+                    if (state === 'checking') {
+                        console.log('🔄 ICE checking in progress - waiting for candidates...');
+                    } else if (state === 'connected') {
+                        console.log('✅ ICE connected successfully!');
+                        this.reconnectAttempts = 0;
+                    } else if (state === 'failed') {
+                        console.log('❌ ICE connection failed - may need reconnection');
+                        this.handleConnectionFailure();
+                    } else if (state === 'disconnected') {
+                        console.log('⚠️ ICE disconnected - attempting recovery...');
+                    }
+                };
+
+                // Add signaling state change monitoring too
+                this.peerConnection.onsignalingstatechange = () => {
+                    if (!this.peerConnection) return;
+                    console.log('📡 Signaling state:', this.peerConnection.signalingState);
+                };
+
                 // Enhanced track handling for viewers
                 this.peerConnection.ontrack = (event) => {
                     console.log('🎬 Received remote track:', event.track.kind);
@@ -1429,15 +1465,9 @@
                         }
                     }
                 };
-
-                // Enhanced ICE connection state
-                this.peerConnection.oniceconnectionstatechange = () => {
-                    if (!this.peerConnection) return;
-                    console.log('ICE connection state:', this.peerConnection.iceConnectionState);
-                };
             },
 
-            // Enhanced polling for viewer
+            // Enhanced polling for viewer with late ICE candidate handling
             startPollingForOffer: function() {
                 if (this.pollingInterval) clearInterval(this.pollingInterval);
                 
@@ -1477,9 +1507,36 @@
                                 if (sessionData.session.candidates && sessionData.session.candidates.length > 0) {
                                     console.log('Adding existing ICE candidates:', sessionData.session.candidates.length);
                                     for (const candidate of sessionData.session.candidates) {
-                                        await this.peerConnection.addIceCandidate(candidate);
+                                        try {
+                                            await this.peerConnection.addIceCandidate(candidate);
+                                            console.log('✅ Added existing ICE candidate');
+                                        } catch (err) {
+                                            console.warn('ICE candidate add error (may already be added):', err);
+                                        }
                                     }
                                 }
+                                
+                                // ✅ FIX: Wait for late ICE candidates after reconnect
+                                setTimeout(async () => {
+                                    try {
+                                        const latest = await API.getWebRTCSession(this.sessionId);
+                                        if (latest.success && latest.session.candidates && latest.session.candidates.length > 0) {
+                                            console.log('🧊 Adding late ICE candidates after reconnect:', latest.session.candidates.length);
+                                            for (const candidate of latest.session.candidates) {
+                                                try {
+                                                    await this.peerConnection.addIceCandidate(candidate);
+                                                    console.log('✅ Added late ICE candidate');
+                                                } catch (err) {
+                                                    console.warn('Late ICE candidate add error:', err);
+                                                }
+                                            }
+                                        } else {
+                                            console.log('No additional ICE candidates yet (will retry).');
+                                        }
+                                    } catch (error) {
+                                        console.error('Error fetching late ICE candidates:', error);
+                                    }
+                                }, 1500);
                                 
                                 // Stop polling once connected
                                 clearInterval(this.pollingInterval);

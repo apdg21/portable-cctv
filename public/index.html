@@ -1467,97 +1467,103 @@
                 };
             },
 
-            // Enhanced polling for viewer with late ICE candidate handling
-            startPollingForOffer: function() {
-                if (this.pollingInterval) clearInterval(this.pollingInterval);
-                
-                let pollCount = 0;
-                const maxPolls = 60;
-                
-                this.pollingInterval = setInterval(async () => {
-                    try {
-                        pollCount++;
-                        if (pollCount > maxPolls) {
-                            console.log('Polling timeout reached');
-                            clearInterval(this.pollingInterval);
-                            this.updateViewerUI('Connection timeout - Stream may have ended');
-                            return;
+           // ✅ Enhanced polling for viewer with late ICE candidate handling + adaptive interval
+startPollingForOffer: function() {
+    if (this.pollingInterval) clearInterval(this.pollingInterval);
+
+    let pollInterval = 2000; // start with 2s
+    let idleCount = 0;
+    const maxPolls = 60;
+
+    const poll = async () => {
+        try {
+            idleCount++;
+            if (idleCount > maxPolls) {
+                console.log('Polling timeout reached');
+                clearInterval(this.pollingInterval);
+                this.updateViewerUI('Connection timeout - Stream may have ended');
+                return;
+            }
+
+            const result = await API.pollWebRTCSession(this.sessionId);
+
+            if (result.success && result.hasOffer) {
+                const sessionData = await API.getWebRTCSession(this.sessionId);
+                if (sessionData.success && sessionData.session.offer) {
+                    console.log('Setting remote description from offer');
+
+                    await this.peerConnection.setRemoteDescription(sessionData.session.offer);
+
+                    const answer = await this.peerConnection.createAnswer();
+                    await this.peerConnection.setLocalDescription(answer);
+
+                    console.log('Sending answer to streamer');
+                    await API.sendWebRTCAnswer(this.sessionId, answer);
+
+                    // Add existing ICE candidates
+                    if (sessionData.session.candidates?.length) {
+                        console.log('Adding existing ICE candidates:', sessionData.session.candidates.length);
+                        for (const candidate of sessionData.session.candidates) {
+                            try {
+                                await this.peerConnection.addIceCandidate(candidate);
+                            } catch (err) {
+                                console.warn('ICE candidate add error (may already be added):', err);
+                            }
                         }
+                    }
 
-                        const result = await API.pollWebRTCSession(this.sessionId);
-                        
-                        if (result.success && result.hasOffer) {
-                            // Get the full session data with offer
-                            const sessionData = await API.getWebRTCSession(this.sessionId);
-                            
-                            if (sessionData.success && sessionData.session.offer) {
-                                console.log('Setting remote description from offer');
-                                
-                                // Set remote description (streamer's offer)
-                                await this.peerConnection.setRemoteDescription(sessionData.session.offer);
-                                
-                                // Create and send answer
-                                const answer = await this.peerConnection.createAnswer();
-                                await this.peerConnection.setLocalDescription(answer);
-                                
-                                console.log('Sending answer to streamer');
-                                await API.sendWebRTCAnswer(this.sessionId, answer);
-
-                                // Add existing ICE candidates from streamer
-                                if (sessionData.session.candidates && sessionData.session.candidates.length > 0) {
-                                    console.log('Adding existing ICE candidates:', sessionData.session.candidates.length);
-                                    for (const candidate of sessionData.session.candidates) {
-                                        try {
-                                            await this.peerConnection.addIceCandidate(candidate);
-                                            console.log('✅ Added existing ICE candidate');
-                                        } catch (err) {
-                                            console.warn('ICE candidate add error (may already be added):', err);
-                                        }
+                    // ✅ Late ICE retry (slow network fix)
+                    setTimeout(async () => {
+                        try {
+                            console.log('⏳ Retrying ICE candidate fetch (slow connection fallback)');
+                            const lateCandidates = await API.getWebRTCSession(this.sessionId);
+                            if (lateCandidates.success && lateCandidates.session.candidates?.length) {
+                                for (const candidate of lateCandidates.session.candidates) {
+                                    try {
+                                        await this.peerConnection.addIceCandidate(candidate);
+                                        console.log('✅ Late ICE candidate added');
+                                    } catch (err) {
+                                        console.warn('Late ICE candidate add error:', err);
                                     }
                                 }
-                                
-                                // ✅ FIX: Extra ICE retry for slow connections
-                                setTimeout(async () => {
-                                    try {
-                                        console.log('⏳ Retrying ICE candidate fetch (slow connection fallback)');
-                                        const lateCandidates = await API.getWebRTCSession(this.sessionId);
-                                        if (lateCandidates.success && lateCandidates.session.candidates && lateCandidates.session.candidates.length > 0) {
-                                            console.log('🧊 Adding late ICE candidates after reconnect:', lateCandidates.session.candidates.length);
-                                            for (const candidate of lateCandidates.session.candidates) {
-                                                try {
-                                                    await this.peerConnection.addIceCandidate(candidate);
-                                                    console.log('✅ Late ICE candidate added');
-                                                } catch (err) {
-                                                    console.warn('Late ICE candidate add error (may be duplicate):', err);
-                                                }
-                                            }
-                                        } else {
-                                            console.log('No additional ICE candidates found in retry');
-                                        }
-                                    } catch (err) {
-                                        console.warn('Late ICE candidate fetch failed:', err.message);
-                                    }
-                                }, 2000);
-                                
-                                // Stop polling once connected
-                                clearInterval(this.pollingInterval);
-                                this.updateViewerUI('Connected to stream');
-                                this.isStreamingActive = true;
                             }
-                        } else if (result.success && !result.isActive) {
-                            console.log('Stream ended');
-                            this.updateViewerUI('Stream has ended');
-                            clearInterval(this.pollingInterval);
-                            this.isStreamingActive = false;
-                        } else {
-                            this.updateViewerUI(`Waiting for stream... (${pollCount}/${maxPolls})`);
+                        } catch (err) {
+                            console.warn('Late ICE fetch failed:', err.message);
                         }
-                    } catch (error) {
-                        console.error('Error polling for offer:', error);
-                        this.updateViewerUI('Connection error - Retrying...');
-                    }
-                }, 1000);
-            },
+                    }, 2000);
+
+                    // Stop polling once connected
+                    clearInterval(this.pollingInterval);
+                    this.updateViewerUI('Connected to stream');
+                    this.isStreamingActive = true;
+                    return;
+                }
+            } else if (result.success && !result.isActive) {
+                console.log('Stream ended');
+                this.updateViewerUI('Stream has ended');
+                clearInterval(this.pollingInterval);
+                this.isStreamingActive = false;
+                return;
+            }
+
+            this.updateViewerUI(`Waiting for stream... (${idleCount}/${maxPolls})`);
+
+            // ⏳ Adaptive polling backoff
+            if (idleCount % 5 === 0 && pollInterval < 8000) {
+                pollInterval += 1000;
+                console.log(`Increasing poll interval to ${pollInterval / 1000}s`);
+                clearInterval(this.pollingInterval);
+                this.pollingInterval = setInterval(poll, pollInterval);
+            }
+
+        } catch (error) {
+            console.error('Error polling for offer:', error);
+            this.updateViewerUI('Connection error - Retrying...');
+        }
+    };
+
+    this.pollingInterval = setInterval(poll, pollInterval);
+},
 
             // Handle connection failure with reconnection
             handleConnectionFailure: function() {

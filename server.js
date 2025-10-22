@@ -646,7 +646,7 @@ app.post('/api/webrtc/session/:sessionId/offer', authenticateToken, async (req, 
   }
 });
 
-// Enhanced answer storage for multiple viewers WITH PROPER RECONNECTION HANDLING AND SELF-VIEWING PREVENTION
+// ✅ FIX #1: Enhanced answer storage with self-viewing prevention
 app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -701,7 +701,7 @@ app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req,
   }
 });
 
-// Enhanced candidate storage for multiple viewers WITH PROPER RECONNECTION HANDLING AND SELF-VIEWING PREVENTION
+// ✅ FIX #2: Enhanced candidate storage with self-viewing prevention
 app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -722,7 +722,6 @@ app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (r
     }
 
     // ✅ FIX: Only clear candidates if viewer was marked as inactive/left
-    // Don't clear just because answer doesn't exist yet - they might arrive in any order
     const viewerLastActivity = session.viewers.get(viewerId);
     const now = Date.now();
     
@@ -751,7 +750,7 @@ app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (r
   }
 });
 
-// ✅ FIX #2: Cleanup endpoint for when viewer leaves
+// ✅ FIX #3: Cleanup endpoint for when viewer leaves
 app.post('/api/webrtc/session/:sessionId/leave', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;

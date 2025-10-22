@@ -1492,6 +1492,13 @@ startPollingForOffer: function() {
                 if (sessionData.success && sessionData.session.offer) {
                     console.log('Setting remote description from offer');
 
+                    // ✅ Safety check for stability before applying remote description
+              if (this.peerConnection.signalingState !== "stable") {
+                    console.warn("⚠️ Signaling state not stable:", this.peerConnection.signalingState);
+                    return; // Avoid InvalidStateError
+              }
+
+
                     await this.peerConnection.setRemoteDescription(sessionData.session.offer);
 
                     const answer = await this.peerConnection.createAnswer();

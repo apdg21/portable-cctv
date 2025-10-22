@@ -256,7 +256,7 @@ app.post('/api/register', async (req, res) => {
 
     // Generate token
     const token = jwt.sign(
-      { userId: user.id, email: user.email },
+      { userId: user.id, email: user.email, name: user.name },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -312,7 +312,7 @@ app.post('/api/login', async (req, res) => {
 
     // Generate token
     const token = jwt.sign(
-      { userId: user.id, email: user.email },
+      { userId: user.id, email: user.email, name: user.name },
       JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -419,7 +419,7 @@ app.post('/api/cameras/:id/delete', authenticateToken, async (req, res) => {
       Date.now().toString(),
       cameraId,
       'camera_deleted',
-      `Camera "${cameraToDelete[2]}" was deleted`,
+      `Camera "${cameraToDelete[2]}" was deleted by ${req.user.name}`,
       new Date().toISOString()
     ]);
 
@@ -451,6 +451,7 @@ app.post('/api/streams/start', authenticateToken, async (req, res) => {
       cameraId,
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
+      ownerName: req.user.name,
       startedAt: new Date().toISOString(),
       isActive: true,
       type: 'webrtc', // Changed from 'local' to 'webrtc'
@@ -462,7 +463,7 @@ app.post('/api/streams/start', authenticateToken, async (req, res) => {
       Date.now().toString(),
       cameraId,
       'stream_started',
-      `WebRTC stream started: ${cameraName || 'Camera'}`,
+      `WebRTC stream started by ${req.user.name}: ${cameraName || 'Camera'}`,
       new Date().toISOString()
     ]);
 
@@ -505,7 +506,7 @@ app.post('/api/streams/:id/stop', authenticateToken, async (req, res) => {
         Date.now().toString(),
         stream.cameraId,
         'stream_stopped',
-        `Stream stopped: ${stream.cameraName}`,
+        `Stream stopped by ${req.user.name}: ${stream.cameraName}`,
         new Date().toISOString()
       ]);
 
@@ -552,6 +553,7 @@ app.get('/api/streams', authenticateToken, async (req, res) => {
         cameraId: stream.cameraId,
         cameraName: stream.cameraName,
         owner: stream.owner,
+        ownerName: stream.ownerName,
         startedAt: stream.startedAt,
         isActive: stream.isActive,
         type: stream.type,
@@ -566,10 +568,10 @@ app.get('/api/streams', authenticateToken, async (req, res) => {
 });
 
 // ===== 2.6 WEBRTC ROUTES =====
-// Create a WebRTC session - COMPATIBILITY ENDPOINT
+// Enhanced WebRTC session creation with client tracking
 app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
   try {
-    const { cameraId, cameraName } = req.body;
+    const { cameraId, cameraName, clientId } = req.body; // Add clientId from frontend
     
     if (!cameraId) {
       return res.status(400).json({ error: 'Camera ID is required' });
@@ -582,6 +584,8 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
       cameraId,
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
+      ownerName: req.user.name, // Store owner name for better logging
+      clientId: clientId, // Store the streamer's client ID
       createdAt: new Date().toISOString(),
       offer: null,
       answers: new Map(), // Store multiple answers for multiple viewers
@@ -596,6 +600,7 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
       cameraId,
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
+      ownerName: req.user.name,
       startedAt: new Date().toISOString(),
       isActive: true,
       type: 'webrtc',
@@ -607,11 +612,11 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
       Date.now().toString(),
       cameraId,
       'webrtc_session_created',
-      `WebRTC session created: ${cameraName || 'Camera'}`,
+      `WebRTC session created by ${req.user.name}: ${cameraName || 'Camera'}`,
       new Date().toISOString()
     ]);
 
-    console.log(`WebRTC session created: ${sessionId} for camera: ${cameraId}`);
+    console.log(`🎥 WebRTC session created: ${sessionId} for camera: ${cameraId} by ${req.user.name} (Client: ${clientId})`);
     
     res.json({ 
       success: true, 
@@ -646,11 +651,11 @@ app.post('/api/webrtc/session/:sessionId/offer', authenticateToken, async (req, 
   }
 });
 
-// ✅ FIX #1: Enhanced answer storage with self-viewing prevention
+// Enhanced answer storage with smarter self-viewing detection
 app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const { answer } = req.body;
+    const { answer, clientId } = req.body; // Add clientId from frontend
     const viewerId = req.user.userId;
     
     const session = webrtcSessions.get(sessionId);
@@ -658,12 +663,18 @@ app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req,
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
 
-    // ✅ CRITICAL FIX: Prevent self-viewing
-    if (session.owner === req.user.userId) {
-      console.log(`🚫 Blocked self-viewing attempt: User ${req.user.userId} trying to view own stream`);
+    // ✅ ENHANCED: Smarter self-viewing detection
+    // Only block if it's the exact same browser session (same clientId)
+    const isSameClient = session.clientId && clientId && session.clientId === clientId;
+    
+    if (session.owner === req.user.userId && isSameClient) {
+      console.log(`🚫 Blocked self-viewing attempt: User ${req.user.userId} (${req.user.name}) trying to view own stream from same browser`);
       return res.status(400).json({ 
-        error: 'Cannot view your own stream from the same account. Use a different device or browser.' 
+        error: 'Cannot view your own stream from the same browser. Use a different browser or device.' 
       });
+    } else if (session.owner === req.user.userId) {
+      console.log(`👥 Same account, different device: User ${req.user.userId} (${req.user.name}) viewing own stream from different browser`);
+      // Allow same account from different browsers/devices
     }
 
     // ✅ ENHANCED: Complete reset for reconnecting viewers
@@ -672,7 +683,7 @@ app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req,
     
     // If viewer was inactive for more than 10 seconds, do complete reset
     if (viewerLastActivity && (now - viewerLastActivity > 10000)) {
-      console.log(`🔄 Viewer ${viewerId} reconnecting after absence - performing complete reset`);
+      console.log(`🔄 Viewer ${req.user.name} (${viewerId}) reconnecting after absence - performing complete reset`);
       session.answers.delete(viewerId);
       session.candidates.delete(viewerId);
       
@@ -693,7 +704,7 @@ app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req,
       stream.viewerCount = session.viewers.size;
     }
     
-    console.log(`✅ Answer stored for viewer ${viewerId} in session: ${sessionId}`);
+    console.log(`✅ Answer stored for viewer ${req.user.name} (${viewerId}) in session: ${sessionId}`);
     res.json({ success: true });
   } catch (error) {
     console.error('Error storing answer:', error);
@@ -701,11 +712,11 @@ app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req,
   }
 });
 
-// ✅ FIX #2: Enhanced candidate storage with self-viewing prevention
+// Enhanced candidate storage with smarter self-viewing detection
 app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const { candidate } = req.body;
+    const { candidate, clientId } = req.body; // Add clientId from frontend
     const viewerId = req.user.userId;
     
     const session = webrtcSessions.get(sessionId);
@@ -713,12 +724,18 @@ app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (r
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
 
-    // ✅ CRITICAL FIX: Prevent self-viewing
-    if (session.owner === req.user.userId) {
-      console.log(`🚫 Blocked self-viewing attempt: User ${req.user.userId} trying to view own stream`);
+    // ✅ ENHANCED: Smarter self-viewing detection
+    // Only block if it's the exact same browser session (same clientId)
+    const isSameClient = session.clientId && clientId && session.clientId === clientId;
+    
+    if (session.owner === req.user.userId && isSameClient) {
+      console.log(`🚫 Blocked self-viewing attempt: User ${req.user.userId} (${req.user.name}) trying to view own stream from same browser`);
       return res.status(400).json({ 
-        error: 'Cannot view your own stream from the same account. Use a different device or browser.' 
+        error: 'Cannot view your own stream from the same browser. Use a different browser or device.' 
       });
+    } else if (session.owner === req.user.userId) {
+      console.log(`👥 Same account, different device: User ${req.user.userId} (${req.user.name}) viewing own stream from different browser`);
+      // Allow same account from different browsers/devices
     }
 
     // ✅ FIX: Only clear candidates if viewer was marked as inactive/left
@@ -727,7 +744,7 @@ app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (r
     
     // If viewer was inactive for a while (more than 30 seconds), clear old data
     if (viewerLastActivity && (now - viewerLastActivity > 30000)) {
-      console.log(`🔄 Viewer ${viewerId} reconnecting after inactivity - clearing old WebRTC data`);
+      console.log(`🔄 Viewer ${req.user.name} (${viewerId}) reconnecting after inactivity - clearing old WebRTC data`);
       session.answers.delete(viewerId);
       session.candidates.delete(viewerId);
     }
@@ -742,7 +759,7 @@ app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (r
     session.viewers.set(viewerId, now); // Update last activity
     session.lastActivity = now;
     
-    console.log(`✅ ICE candidate added for viewer ${viewerId} in session: ${sessionId}`);
+    console.log(`✅ ICE candidate added for viewer ${req.user.name} (${viewerId}) in session: ${sessionId}`);
     res.json({ success: true });
   } catch (error) {
     console.error('Error adding ICE candidate:', error);
@@ -769,7 +786,7 @@ app.post('/api/webrtc/session/:sessionId/leave', authenticateToken, async (req, 
         stream.viewerCount = session.viewers.size;
       }
       
-      console.log(`👋 Viewer ${viewerId} left session ${sessionId} - data cleaned up`);
+      console.log(`👋 Viewer ${req.user.name} (${viewerId}) left session ${sessionId} - data cleaned up`);
     }
     
     res.json({ success: true, message: 'Viewer data cleaned up' });
@@ -878,7 +895,9 @@ app.get('/api/webrtc/session/:streamId', authenticateToken, async (req, res) => 
         candidates: viewerCandidates,
         isActive: session.isActive,
         viewerCount: session.viewers.size,
-        owner: session.owner // Include owner info for self-viewing detection
+        owner: session.owner,
+        ownerName: session.ownerName,
+        clientId: session.clientId // Include client ID for frontend detection
       }
     });
   } catch (error) {
@@ -978,7 +997,8 @@ app.get('/api/webrtc/session/:streamId/stats', authenticateToken, async (req, re
         isActive: session.isActive,
         createdAt: session.createdAt,
         lastActivity: session.lastActivity,
-        cameraName: session.cameraName
+        cameraName: session.cameraName,
+        ownerName: session.ownerName
       }
     });
   } catch (error) {
@@ -999,7 +1019,8 @@ app.get('/api/webrtc/sessions', authenticateToken, async (req, res) => {
           cameraId: session.cameraId,
           cameraName: session.cameraName,
           viewerCount: session.viewers.size,
-          createdAt: session.createdAt
+          createdAt: session.createdAt,
+          ownerName: session.ownerName
         });
       }
     }

@@ -1302,14 +1302,11 @@ joinStream: async function(streamId, cameraId = null, cameraName = "Remote Camer
         this.isStreamingActive = false;
 
         // ✅ Always create a new WebRTC session for this reconnect
-        const newSession = await API.createWebRTCSession(cameraId || streamId, cameraName);
-        this.sessionId = newSession.sessionId;
-        console.log("🔁 Viewer joining fresh session:", this.sessionId);
-        
-        if (!newSession.success) {
-            throw new Error("Failed to create new WebRTC session for viewer reconnect");
-        }
+const newSession = await API.createWebRTCSession(cameraId || streamId, cameraName);
 
+if (!newSession.success) {
+    throw new Error("Failed to create new WebRTC session for viewer reconnect");
+}
         this.sessionId = newSession.sessionId;
         console.log("🔁 Viewer joining fresh session:", this.sessionId);
 

@@ -598,6 +598,12 @@
             height: 100%;
             object-fit: cover;
         }
+
+        /* Refresh button for viewers */
+        #refresh-stream {
+            color: white;
+            border-color: white;
+        }
     </style>
 </head>
 <body>
@@ -893,6 +899,10 @@
                         <button class="btn btn-outline" style="color: white; border-color: white;" id="take-snapshot">
                             <i class="fas fa-camera"></i> Snapshot
                         </button>
+                        <!-- Refresh button for viewers -->
+                        <button class="btn btn-outline hidden" style="color: white; border-color: white;" id="refresh-stream">
+                            <i class="fas fa-redo"></i> Refresh
+                        </button>
                     </div>
                 </div>
                 
@@ -1174,6 +1184,7 @@
             isStreamingActive: false,
             reconnectAttempts: 0,
             maxReconnectAttempts: 5,
+            metricsInterval: null,
 
             // Start streaming (Streamer device) - ENHANCED
             startStreaming: async function(cameraId, cameraName, stream) {
@@ -1240,9 +1251,36 @@
             startPollingForViewers: function() {
                 if (this.pollingInterval) clearInterval(this.pollingInterval);
                 
+                let emptyPollCount = 0;
+                const maxEmptyPolls = 5; // Stop after 10 seconds of no viewers
+                
                 this.pollingInterval = setInterval(async () => {
                     try {
-                        if (!this.isInitiator || !this.sessionId) return;
+                        if (!this.isInitiator || !this.sessionId) {
+                            clearInterval(this.pollingInterval);
+                            return;
+                        }
+
+                        // Check if session still exists
+                        const stats = await API.getWebRTCSessionStats(this.sessionId);
+                        if (!stats.success) {
+                            console.log('Session no longer exists, stopping polling');
+                            clearInterval(this.pollingInterval);
+                            return;
+                        }
+
+                        const viewerCount = stats.stats.viewerCount || 0;
+                        
+                        if (viewerCount === 0) {
+                            emptyPollCount++;
+                            if (emptyPollCount >= maxEmptyPolls) {
+                                console.log('No viewers for extended period, stopping polling');
+                                clearInterval(this.pollingInterval);
+                                return;
+                            }
+                        } else {
+                            emptyPollCount = 0; // Reset when viewers are present
+                        }
 
                         // Get answers from viewers
                         const answersResponse = await API.getWebRTCSessionAnswers(this.sessionId);
@@ -1274,47 +1312,60 @@
                         }
 
                         // Update viewer count
-                        const stats = await API.getWebRTCSessionStats(this.sessionId);
-                        if (stats.success) {
-                            this.updateViewerCount(stats.stats.viewerCount || 0);
-                        }
+                        this.updateViewerCount();
                         
                     } catch (error) {
                         console.error('Error polling for viewers:', error);
+                        clearInterval(this.pollingInterval);
                     }
                 }, 2000); // Poll every 2 seconds
             },
 
-            // Enhanced join stream with proper cleanup
+            // Enhanced join stream with self-viewing detection and fresh start
             joinStream: async function(streamId) {
                 try {
-                    // ✅ FIX #3: Always create new RTCPeerConnection when reconnecting
-                    if (this.peerConnection) {
-                        console.log('🔄 Cleaning up previous peer connection for reconnection');
-                        this.peerConnection.close();
-                        this.peerConnection = null;
+                    // ✅ FIX: Check if this is the user's own stream
+                    const sessionData = await API.getWebRTCSession(streamId);
+                    if (sessionData.success && sessionData.session.owner === currentUser.id) {
+                        console.warn('⚠️ Self-viewing detected - this will likely fail');
+                        alert('⚠️ You are trying to view your own stream. For WebRTC to work properly:\n\n• Use a different browser (Chrome, Firefox, Safari)\n• Or use a different device (phone, tablet, another computer)\n• Or use a different user account');
+                        
+                        // Optionally block the attempt entirely
+                        return { success: false, error: 'Self-viewing not supported. Use a different device or browser.' };
+                    }
+
+                    console.log('🔄 Starting fresh WebRTC connection...');
+                    
+                    // 1. Always cleanup previous connection first
+                    await this.disconnectViewer();
+                    
+                    // 2. Small delay to ensure cleanup completes
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    
+                    // 3. Reset video element state
+                    const videoElement = document.getElementById('camera-feed');
+                    const placeholderElement = document.getElementById('camera-placeholder');
+                    
+                    if (videoElement) {
+                        videoElement.srcObject = null;
+                        videoElement.classList.add('hidden');
+                    }
+                    
+                    if (placeholderElement) {
+                        placeholderElement.classList.remove('hidden');
+                        document.getElementById('placeholder-text').textContent = 'Connecting to stream...';
                     }
 
                     this.sessionId = streamId;
                     this.isInitiator = false;
                     this.reconnectAttempts = 0;
                     
-                    // Initialize fresh WebRTC as viewer
+                    // 4. Initialize fresh WebRTC as viewer
                     this.initWebRTC(false);
                     
                     console.log('🔄 Joining WebRTC stream with fresh connection:', streamId);
-                    this.updateViewerUI('Connecting to WebRTC stream...');
                     
-                    // ✅ FIX: Clear video element before reconnecting
-                    const videoElement = document.getElementById('camera-feed');
-                    if (videoElement) {
-                        videoElement.pause();
-                        videoElement.srcObject = null;
-                        videoElement.classList.add('hidden');
-                        document.getElementById('camera-placeholder').classList.remove('hidden');
-                    }
-                    
-                    // Start polling for streamer's offer
+                    // 5. Start polling for streamer's offer
                     this.startPollingForOffer();
 
                     return { success: true };
@@ -1324,41 +1375,67 @@
                 }
             },
 
-            // Join stream for preview (lightweight connection)
-            joinStreamForPreview: async function(streamId, videoElement) {
-                try {
-                    const configuration = {
-                        iceServers: [
-                            { urls: 'stun:stun.l.google.com:19302' }
-                        ]
-                    };
-                    
-                    const pc = new RTCPeerConnection(configuration);
-                    
-                    pc.ontrack = (event) => {
-                        if (event.streams && event.streams[0]) {
-                            videoElement.srcObject = event.streams[0];
-                            // Use safe play with error handling
-                            videoElement.play().catch(e => {
-                                console.log('Preview play warning:', e.name);
-                            });
-                        }
-                    };
-
-                    // Get session data and set up connection
-                    const sessionData = await API.getWebRTCSession(streamId);
-                    if (sessionData.success && sessionData.session.offer) {
-                        await pc.setRemoteDescription(sessionData.session.offer);
-                        const answer = await pc.createAnswer();
-                        await pc.setLocalDescription(answer);
-                        await API.sendWebRTCAnswer(streamId, answer);
+            // Enhanced disconnect with complete cleanup
+            disconnectViewer: async function() {
+                console.log('🔄 Starting comprehensive viewer cleanup...');
+                
+                // 1. Notify backend first
+                if (this.sessionId && authToken) {
+                    try {
+                        await API.leaveWebRTCSession(this.sessionId);
+                        console.log('✅ Notified backend of viewer departure');
+                    } catch (error) {
+                        console.log('Note: Could not notify backend of departure', error.message);
                     }
-                    
-                    return { success: true, peerConnection: pc };
-                } catch (error) {
-                    console.error('Preview connection error:', error);
-                    return { success: false, error: error.message };
                 }
+
+                // 2. Clean up video element completely
+                const videoElement = document.getElementById('camera-feed');
+                if (videoElement) {
+                    console.log('🧹 Cleaning up video element...');
+                    videoElement.pause();
+                    videoElement.srcObject = null;
+                    videoElement.load(); // Force reload
+                    videoElement.classList.add('hidden');
+                    
+                    // Show placeholder
+                    document.getElementById('camera-placeholder').classList.remove('hidden');
+                    document.getElementById('placeholder-text').textContent = 'Disconnected';
+                }
+
+                // 3. Completely destroy PeerConnection
+                if (this.peerConnection) {
+                    console.log('🔌 Closing PeerConnection...');
+                    
+                    // Remove all event listeners first
+                    this.peerConnection.onicecandidate = null;
+                    this.peerConnection.ontrack = null;
+                    this.peerConnection.onconnectionstatechange = null;
+                    this.peerConnection.oniceconnectionstatechange = null;
+                    this.peerConnection.onsignalingstatechange = null;
+                    
+                    // Close and nullify
+                    this.peerConnection.close();
+                    this.peerConnection = null;
+                    console.log('✅ PeerConnection destroyed');
+                }
+
+                // 4. Stop all intervals
+                if (this.pollingInterval) {
+                    clearInterval(this.pollingInterval);
+                    this.pollingInterval = null;
+                }
+                
+                this.stopConnectionMetrics();
+
+                // 5. Reset ALL state
+                this.sessionId = null;
+                this.isInitiator = false;
+                this.streamStartTime = null;
+                this.reconnectAttempts = 0;
+                this.isStreamingActive = false;
+                
+                console.log('✅ Viewer completely disconnected and cleaned up');
             },
 
             // Enhanced WebRTC initialization with better debugging
@@ -1392,10 +1469,10 @@
                     if (!this.peerConnection) return;
                     
                     const state = this.peerConnection.connectionState;
-                    console.log('WebRTC connection state:', state);
+                    console.log('🔗 WebRTC connection state:', state);
                     
                     if (state === 'connected') {
-                        console.log('✅ WebRTC connection established!');
+                        console.log('✅ WebRTC connection established successfully!');
                         this.reconnectAttempts = 0;
                         document.getElementById('stream-status').textContent = 
                             this.isInitiator ? `Streaming to viewers` : 'Connected to stream';
@@ -1405,7 +1482,7 @@
                             this.updateViewerCount();
                         }
                     } else if (state === 'disconnected' || state === 'failed') {
-                        console.log('❌ WebRTC connection failed:', state);
+                        console.log('❌ WebRTC connection failed - check network configuration');
                         this.handleConnectionFailure();
                     }
                 };
@@ -1437,34 +1514,59 @@
                     console.log('📡 Signaling state:', this.peerConnection.signalingState);
                 };
 
-                // Enhanced track handling for viewers
+                // Enhanced track handling for viewers with video play retry
                 this.peerConnection.ontrack = (event) => {
-                    console.log('🎬 Received remote track:', event.track.kind);
+                    console.log('🎬 Received remote track:', event.track.kind, event.track.id);
                     
                     if (!this.isInitiator && event.streams && event.streams[0]) {
                         const remoteStream = event.streams[0];
-                        console.log('Remote stream received with tracks:', remoteStream.getTracks());
+                        console.log('📹 Remote stream received with tracks:', remoteStream.getTracks().map(t => `${t.kind}-${t.id}`));
                         
                         const videoElement = document.getElementById('camera-feed');
                         if (videoElement) {
-                            // Clear previous stream
+                            console.log('🔄 Applying stream to video element...');
+                            
+                            // Completely reset video element
+                            videoElement.pause();
                             videoElement.srcObject = null;
+                            
+                            // Set new stream
                             videoElement.srcObject = remoteStream;
                             videoElement.classList.remove('hidden');
                             
+                            // Hide placeholder
                             document.getElementById('camera-placeholder').classList.add('hidden');
                             document.getElementById('stream-status').textContent = 'Stream connected';
                             
-                            // Auto-play with error handling
-                            videoElement.play().catch(e => {
-                                console.log('Video play warning:', e.name);
-                                // Mute and try again if autoplay fails
-                                videoElement.muted = true;
-                                videoElement.play();
-                            });
+                            // Enhanced play with multiple retries
+                            this.ensureVideoPlays(videoElement);
                         }
                     }
                 };
+            },
+
+            // Helper method to ensure video plays
+            ensureVideoPlays: function(videoElement) {
+                const playWithRetry = (retries = 3) => {
+                    videoElement.play().then(() => {
+                        console.log('✅ Video playback started successfully');
+                    }).catch(error => {
+                        console.log(`❌ Video play failed (${retries} retries left):`, error.name);
+                        
+                        if (retries > 0) {
+                            // Try different strategies
+                            videoElement.muted = true;
+                            videoElement.currentTime = 0;
+                            
+                            setTimeout(() => playWithRetry(retries - 1), 500);
+                        } else {
+                            console.warn('⚠️ Video autoplay failed after multiple attempts');
+                            // Manual play might be required by user
+                        }
+                    });
+                };
+                
+                playWithRetry();
             },
 
             // Enhanced polling for viewer with late ICE candidate handling
@@ -1601,48 +1703,12 @@
                     this.initWebRTC(false);
                     this.startPollingForOffer();
                     
-                    this.updateViewerUI(`Reconnecting... (Attempt ${this.reconnectAttempts})`);
+                    this.updateViewerUI(`Reconnecting... (Attempt ${this.reconnectAttempts})`, true);
                 } catch (error) {
                     console.error('Error during reconnection:', error);
                     // Retry after delay
                     setTimeout(() => this.reconnectAsViewer(), 2000 * this.reconnectAttempts);
                 }
-            },
-
-            // Enhanced disconnect with better cleanup
-            disconnectViewer: async function() {
-                // Notify backend that viewer is leaving
-                if (this.sessionId && authToken) {
-                    try {
-                        await API.leaveWebRTCSession(this.sessionId);
-                        console.log('✅ Notified backend of viewer departure');
-                    } catch (error) {
-                        console.log('Note: Could not notify backend of departure', error.message);
-                    }
-                }
-
-                // Clean up WebRTC connection
-                if (this.peerConnection) {
-                    this.peerConnection.close();
-                    this.peerConnection = null;
-                }
-                
-                // Stop polling
-                if (this.pollingInterval) {
-                    clearInterval(this.pollingInterval);
-                }
-                
-                // Stop metrics
-                this.stopConnectionMetrics();
-                
-                // Reset state
-                this.sessionId = null;
-                this.isInitiator = false;
-                this.streamStartTime = null;
-                this.reconnectAttempts = 0;
-                this.isStreamingActive = false;
-                
-                console.log('✅ Viewer completely disconnected and cleaned up');
             },
 
             // Enhanced close (for streamer)
@@ -1673,8 +1739,8 @@
             },
 
             // Update viewer count display
-            updateViewerCount: async function(count) {
-                if (this.isInitiator) {
+            updateViewerCount: async function() {
+                if (this.isInitiator && this.sessionId) {
                     try {
                         const stats = await API.getWebRTCSessionStats(this.sessionId);
                         if (stats.success) {
@@ -1695,19 +1761,30 @@
                 document.getElementById('stream-role-info').textContent = 'Streaming to other devices';
                 document.getElementById('stream-status').textContent = 'Streaming active';
                 document.getElementById('stream-devices').textContent = '0 viewers connected';
+                
+                // Hide refresh button for streamer
+                document.getElementById('refresh-stream').classList.add('hidden');
             },
 
-            // Update viewer UI
-            updateViewerUI: function(status) {
+            // Update viewer UI with reconnection status
+            updateViewerUI: function(status, isReconnecting = false) {
                 document.getElementById('streaming-role').textContent = 'VIEWING';
-                document.getElementById('streaming-role').style.background = 'var(--secondary)';
-                document.getElementById('stream-role-info').textContent = 'Viewing remote stream';
+                document.getElementById('streaming-role').style.background = isReconnecting ? 'var(--warning)' : 'var(--secondary)';
+                document.getElementById('stream-role-info').textContent = isReconnecting ? 'Reconnecting to stream...' : 'Viewing remote stream';
                 document.getElementById('placeholder-text').textContent = status;
                 document.getElementById('stream-status').textContent = status;
+                
+                // Add reconnection indicator
+                if (isReconnecting) {
+                    document.getElementById('streaming-role').innerHTML = 'RECONNECTING <i class="fas fa-sync fa-spin"></i>';
+                }
                 
                 // Hide streamer controls for viewer
                 document.getElementById('start-live-camera').classList.add('hidden');
                 document.getElementById('stop-live-camera').classList.add('hidden');
+                
+                // Show refresh button for viewer
+                document.getElementById('refresh-stream').classList.remove('hidden');
             },
 
             // Start connection metrics
@@ -1943,10 +2020,12 @@
                     // Viewer mode - hide start stream button
                     document.getElementById('start-live-camera').classList.add('hidden');
                     document.getElementById('stop-live-camera').classList.add('hidden');
+                    document.getElementById('refresh-stream').classList.remove('hidden');
                 } else {
                     // Streamer mode - show start stream button
                     document.getElementById('start-live-camera').classList.remove('hidden');
                     document.getElementById('stop-live-camera').classList.add('hidden');
+                    document.getElementById('refresh-stream').classList.add('hidden');
                 }
                 
                 this.updateLiveView();
@@ -2695,6 +2774,20 @@
                         'Snapshot Taken', 
                         `Snapshot captured from ${camera.name}`
                     );
+                }
+            });
+
+            // Refresh stream button for viewers
+            document.getElementById('refresh-stream').addEventListener('click', async function() {
+                if (currentStreamId) {
+                    console.log('🔄 Manual stream refresh requested');
+                    await WebRTCManager.disconnectViewer();
+                    setTimeout(async () => {
+                        const joinResult = await WebRTCManager.joinStream(currentStreamId);
+                        if (!joinResult.success) {
+                            alert('Refresh failed: ' + joinResult.error);
+                        }
+                    }, 500);
                 }
             });
             

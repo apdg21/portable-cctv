@@ -1163,7 +1163,7 @@
             }
         };
 
-        // Enhanced WebRTC Manager with Complete Connection Handling
+        // Enhanced WebRTC Manager with Complete ICE Exchange AND RECONNECTION FIXES
         const WebRTCManager = {
             peerConnection: null,
             isInitiator: false,
@@ -1173,22 +1173,18 @@
             pollingInterval: null,
             isStreamingActive: false,
             reconnectAttempts: 0,
-            maxReconnectAttempts: 3,
-            connectionState: 'disconnected',
+            maxReconnectAttempts: 5,
 
-            // Enhanced streaming initialization
+            // Start streaming (Streamer device) - ENHANCED
             startStreaming: async function(cameraId, cameraName, stream) {
                 try {
-                    console.log('🚀 Starting WebRTC streaming for camera:', cameraId);
-                    
                     this.currentCameraId = cameraId;
-                    this.connectionState = 'connecting';
                     
                     // Create WebRTC session on server
                     const sessionResult = await API.createWebRTCSession(cameraId, cameraName);
 
                     if (!sessionResult.success) {
-                        throw new Error(sessionResult.error || 'Failed to create WebRTC session');
+                        throw new Error(sessionResult.error);
                     }
 
                     this.sessionId = sessionResult.sessionId;
@@ -1196,33 +1192,30 @@
                     this.isStreamingActive = true;
                     this.reconnectAttempts = 0;
                     
-                    console.log('✅ WebRTC session created:', this.sessionId);
-                    
-                    // Initialize WebRTC as streamer
-                    await this.initWebRTC(true);
+                    // Initialize WebRTC as streamer with better configuration
+                    this.initWebRTC(true);
                     
                     // Add local stream tracks to the connection
                     if (stream) {
-                        console.log('📹 Adding local stream tracks:', stream.getTracks().length);
+                        console.log('Adding local stream tracks:', stream.getTracks());
                         stream.getTracks().forEach(track => {
                             this.peerConnection.addTrack(track, stream);
                         });
                     }
 
-                    // Create and send offer
+                    // Create and send offer with better configuration
                     const offerOptions = {
                         offerToReceiveAudio: false,
                         offerToReceiveVideo: false
                     };
                     
-                    console.log('📨 Creating WebRTC offer...');
                     const offer = await this.peerConnection.createOffer(offerOptions);
                     await this.peerConnection.setLocalDescription(offer);
 
-                    console.log('📤 Sending offer to server...');
+                    console.log('Sending offer to server:', offer.type);
                     await API.sendWebRTCOffer(this.sessionId, offer);
 
-                    console.log('✅ WebRTC streaming started successfully');
+                    console.log('WebRTC streaming started. Session:', this.sessionId);
                     
                     // Update UI for streamer
                     this.updateStreamerUI();
@@ -1231,21 +1224,19 @@
                     this.startPollingForViewers();
                     
                     this.streamStartTime = new Date();
-                    this.connectionState = 'connected';
 
                     return { 
                         success: true, 
                         sessionId: this.sessionId,
-                        message: 'WebRTC streaming started successfully'
+                        message: 'WebRTC streaming started - Other devices can now view this stream'
                     };
                 } catch (error) {
-                    console.error('❌ Error starting WebRTC streaming:', error);
-                    this.connectionState = 'failed';
+                    console.error('Error starting WebRTC streaming:', error);
                     return { success: false, error: error.message };
                 }
             },
 
-            // Enhanced polling for streamer
+            // Enhanced polling for streamer to get viewer answers and ICE candidates
             startPollingForViewers: function() {
                 if (this.pollingInterval) clearInterval(this.pollingInterval);
                 
@@ -1257,15 +1248,13 @@
                         const answersResponse = await API.getWebRTCSessionAnswers(this.sessionId);
                         
                         if (answersResponse.success && answersResponse.answers.length > 0) {
-                            console.log('📥 Processing viewer answers:', answersResponse.answers.length);
                             for (const answer of answersResponse.answers) {
                                 try {
-                                    if (this.peerConnection.signalingState === 'have-local-offer') {
-                                        await this.peerConnection.setRemoteDescription(answer);
-                                        console.log('✅ Remote description set from viewer answer');
-                                    }
+                                    console.log('Processing viewer answer:', answer.type);
+                                    await this.peerConnection.setRemoteDescription(answer);
+                                    console.log('Remote description set successfully');
                                 } catch (error) {
-                                    console.error('❌ Error setting remote description:', error);
+                                    console.error('Error setting remote description:', error);
                                 }
                             }
                         }
@@ -1274,40 +1263,34 @@
                         const candidatesResponse = await API.getWebRTCSessionCandidates(this.sessionId);
                         
                         if (candidatesResponse.success && candidatesResponse.candidates.length > 0) {
-                            console.log('🧊 Processing viewer ICE candidates:', candidatesResponse.candidates.length);
                             for (const candidate of candidatesResponse.candidates) {
                                 try {
                                     await this.peerConnection.addIceCandidate(candidate);
-                                    console.log('✅ Added ICE candidate from viewer');
+                                    console.log('Added ICE candidate from viewer');
                                 } catch (error) {
-                                    // This is often normal - candidate might already be added
-                                    if (error.toString().includes('already')) {
-                                        console.log('ℹ️ ICE candidate already added (normal)');
-                                    } else {
-                                        console.error('❌ Error adding ICE candidate:', error);
-                                    }
+                                    console.error('Error adding ICE candidate:', error);
                                 }
                             }
                         }
 
                         // Update viewer count
-                        if (answersResponse.viewerCount !== undefined) {
-                            this.updateViewerCount(answersResponse.viewerCount);
+                        const stats = await API.getWebRTCSessionStats(this.sessionId);
+                        if (stats.success) {
+                            this.updateViewerCount(stats.stats.viewerCount || 0);
                         }
                         
                     } catch (error) {
-                        console.error('❌ Error polling for viewers:', error);
+                        console.error('Error polling for viewers:', error);
                     }
-                }, 3000); // Poll every 3 seconds
+                }, 2000); // Poll every 2 seconds
             },
 
-            // Enhanced viewer connection
+            // Enhanced join stream with proper cleanup
             joinStream: async function(streamId) {
                 try {
-                    console.log('👁️ Joining WebRTC stream:', streamId);
-                    
-                    // Clean up any existing connection
+                    // ✅ FIX #3: Always create new RTCPeerConnection when reconnecting
                     if (this.peerConnection) {
+                        console.log('🔄 Cleaning up previous peer connection for reconnection');
                         this.peerConnection.close();
                         this.peerConnection = null;
                     }
@@ -1315,14 +1298,14 @@
                     this.sessionId = streamId;
                     this.isInitiator = false;
                     this.reconnectAttempts = 0;
-                    this.connectionState = 'connecting';
                     
                     // Initialize fresh WebRTC as viewer
-                    await this.initWebRTC(false);
+                    this.initWebRTC(false);
                     
+                    console.log('🔄 Joining WebRTC stream with fresh connection:', streamId);
                     this.updateViewerUI('Connecting to WebRTC stream...');
                     
-                    // Clear video element
+                    // ✅ FIX: Clear video element before reconnecting
                     const videoElement = document.getElementById('camera-feed');
                     if (videoElement) {
                         videoElement.pause();
@@ -1336,14 +1319,50 @@
 
                     return { success: true };
                 } catch (error) {
-                    console.error('❌ Error joining WebRTC stream:', error);
-                    this.connectionState = 'failed';
+                    console.error('Error joining WebRTC stream:', error);
                     return { success: false, error: error.message };
                 }
             },
 
-            // Enhanced WebRTC initialization
-            initWebRTC: async function(isInitiator) {
+            // Join stream for preview (lightweight connection)
+            joinStreamForPreview: async function(streamId, videoElement) {
+                try {
+                    const configuration = {
+                        iceServers: [
+                            { urls: 'stun:stun.l.google.com:19302' }
+                        ]
+                    };
+                    
+                    const pc = new RTCPeerConnection(configuration);
+                    
+                    pc.ontrack = (event) => {
+                        if (event.streams && event.streams[0]) {
+                            videoElement.srcObject = event.streams[0];
+                            // Use safe play with error handling
+                            videoElement.play().catch(e => {
+                                console.log('Preview play warning:', e.name);
+                            });
+                        }
+                    };
+
+                    // Get session data and set up connection
+                    const sessionData = await API.getWebRTCSession(streamId);
+                    if (sessionData.success && sessionData.session.offer) {
+                        await pc.setRemoteDescription(sessionData.session.offer);
+                        const answer = await pc.createAnswer();
+                        await pc.setLocalDescription(answer);
+                        await API.sendWebRTCAnswer(streamId, answer);
+                    }
+                    
+                    return { success: true, peerConnection: pc };
+                } catch (error) {
+                    console.error('Preview connection error:', error);
+                    return { success: false, error: error.message };
+                }
+            },
+
+            // Enhanced WebRTC initialization with better debugging
+            initWebRTC: function(isInitiator) {
                 const configuration = {
                     iceServers: [
                         { urls: 'stun:stun.l.google.com:19302' },
@@ -1358,14 +1377,13 @@
                 this.peerConnection = new RTCPeerConnection(configuration);
                 this.isInitiator = isInitiator;
 
-                console.log('🔧 WebRTC initialized as:', isInitiator ? 'Streamer' : 'Viewer');
+                console.log('WebRTC initialized as:', isInitiator ? 'Streamer' : 'Viewer');
 
                 // Enhanced ICE candidate handling
                 this.peerConnection.onicecandidate = (event) => {
                     if (event.candidate && this.sessionId) {
-                        console.log('📤 Sending ICE candidate:', event.candidate.type);
-                        API.sendWebRTCCandidate(this.sessionId, event.candidate)
-                            .catch(error => console.log('Note: Could not send candidate', error.message));
+                        console.log('Sending ICE candidate:', event.candidate.type);
+                        API.sendWebRTCCandidate(this.sessionId, event.candidate);
                     }
                 };
 
@@ -1374,14 +1392,13 @@
                     if (!this.peerConnection) return;
                     
                     const state = this.peerConnection.connectionState;
-                    this.connectionState = state;
-                    console.log('🔗 WebRTC connection state:', state);
+                    console.log('WebRTC connection state:', state);
                     
                     if (state === 'connected') {
                         console.log('✅ WebRTC connection established!');
                         this.reconnectAttempts = 0;
                         document.getElementById('stream-status').textContent = 
-                            this.isInitiator ? 'Streaming to viewers' : 'Connected to stream';
+                            this.isInitiator ? `Streaming to viewers` : 'Connected to stream';
                         this.startConnectionMetrics();
                         
                         if (this.isInitiator) {
@@ -1393,16 +1410,44 @@
                     }
                 };
 
+                // Enhanced ICE connection state with better debugging
+                this.peerConnection.oniceconnectionstatechange = () => {
+                    if (!this.peerConnection) return;
+                    
+                    const state = this.peerConnection.iceConnectionState;
+                    console.log('🧊 ICE connection state changed to:', state);
+                    
+                    // Enhanced debugging for reconnection scenarios
+                    if (state === 'checking') {
+                        console.log('🔄 ICE checking in progress - waiting for candidates...');
+                    } else if (state === 'connected') {
+                        console.log('✅ ICE connected successfully!');
+                        this.reconnectAttempts = 0;
+                    } else if (state === 'failed') {
+                        console.log('❌ ICE connection failed - may need reconnection');
+                        this.handleConnectionFailure();
+                    } else if (state === 'disconnected') {
+                        console.log('⚠️ ICE disconnected - attempting recovery...');
+                    }
+                };
+
+                // Add signaling state change monitoring too
+                this.peerConnection.onsignalingstatechange = () => {
+                    if (!this.peerConnection) return;
+                    console.log('📡 Signaling state:', this.peerConnection.signalingState);
+                };
+
                 // Enhanced track handling for viewers
                 this.peerConnection.ontrack = (event) => {
                     console.log('🎬 Received remote track:', event.track.kind);
                     
                     if (!this.isInitiator && event.streams && event.streams[0]) {
                         const remoteStream = event.streams[0];
-                        console.log('📹 Remote stream received with tracks:', remoteStream.getTracks().length);
+                        console.log('Remote stream received with tracks:', remoteStream.getTracks());
                         
                         const videoElement = document.getElementById('camera-feed');
                         if (videoElement) {
+                            // Clear previous stream
                             videoElement.srcObject = null;
                             videoElement.srcObject = remoteStream;
                             videoElement.classList.remove('hidden');
@@ -1412,7 +1457,8 @@
                             
                             // Auto-play with error handling
                             videoElement.play().catch(e => {
-                                console.log('⚠️ Video play warning:', e.name);
+                                console.log('Video play warning:', e.name);
+                                // Mute and try again if autoplay fails
                                 videoElement.muted = true;
                                 videoElement.play();
                             });
@@ -1421,18 +1467,18 @@
                 };
             },
 
-            // Enhanced polling for viewer
+            // Enhanced polling for viewer with late ICE candidate handling
             startPollingForOffer: function() {
                 if (this.pollingInterval) clearInterval(this.pollingInterval);
                 
                 let pollCount = 0;
-                const maxPolls = 30; // 30 seconds timeout
+                const maxPolls = 60;
                 
                 this.pollingInterval = setInterval(async () => {
                     try {
                         pollCount++;
                         if (pollCount > maxPolls) {
-                            console.log('⏰ Polling timeout reached');
+                            console.log('Polling timeout reached');
                             clearInterval(this.pollingInterval);
                             this.updateViewerUI('Connection timeout - Stream may have ended');
                             return;
@@ -1440,18 +1486,12 @@
 
                         const result = await API.pollWebRTCSession(this.sessionId);
                         
-                        console.log(`🔍 Poll ${pollCount}/${maxPolls}:`, {
-                            hasOffer: result.hasOffer,
-                            hasAnswer: result.hasAnswer,
-                            candidateCount: result.candidates?.length || 0
-                        });
-
                         if (result.success && result.hasOffer) {
                             // Get the full session data with offer
                             const sessionData = await API.getWebRTCSession(this.sessionId);
                             
                             if (sessionData.success && sessionData.session.offer) {
-                                console.log('📥 Setting remote description from offer');
+                                console.log('Setting remote description from offer');
                                 
                                 // Set remote description (streamer's offer)
                                 await this.peerConnection.setRemoteDescription(sessionData.session.offer);
@@ -1460,21 +1500,44 @@
                                 const answer = await this.peerConnection.createAnswer();
                                 await this.peerConnection.setLocalDescription(answer);
                                 
-                                console.log('📤 Sending answer to streamer');
+                                console.log('Sending answer to streamer');
                                 await API.sendWebRTCAnswer(this.sessionId, answer);
 
                                 // Add existing ICE candidates from streamer
                                 if (sessionData.session.candidates && sessionData.session.candidates.length > 0) {
-                                    console.log('🧊 Adding existing ICE candidates:', sessionData.session.candidates.length);
+                                    console.log('Adding existing ICE candidates:', sessionData.session.candidates.length);
                                     for (const candidate of sessionData.session.candidates) {
                                         try {
                                             await this.peerConnection.addIceCandidate(candidate);
                                             console.log('✅ Added existing ICE candidate');
                                         } catch (err) {
-                                            console.log('ℹ️ ICE candidate add note (may be duplicate):', err.message);
+                                            console.warn('ICE candidate add error (may already be added):', err);
                                         }
                                     }
                                 }
+                                
+                                // ✅ FIX: Extra ICE retry for slow connections
+                                setTimeout(async () => {
+                                    try {
+                                        console.log('⏳ Retrying ICE candidate fetch (slow connection fallback)');
+                                        const lateCandidates = await API.getWebRTCSession(this.sessionId);
+                                        if (lateCandidates.success && lateCandidates.session.candidates && lateCandidates.session.candidates.length > 0) {
+                                            console.log('🧊 Adding late ICE candidates after reconnect:', lateCandidates.session.candidates.length);
+                                            for (const candidate of lateCandidates.session.candidates) {
+                                                try {
+                                                    await this.peerConnection.addIceCandidate(candidate);
+                                                    console.log('✅ Late ICE candidate added');
+                                                } catch (err) {
+                                                    console.warn('Late ICE candidate add error (may be duplicate):', err);
+                                                }
+                                            }
+                                        } else {
+                                            console.log('No additional ICE candidates found in retry');
+                                        }
+                                    } catch (err) {
+                                        console.warn('Late ICE candidate fetch failed:', err.message);
+                                    }
+                                }, 2000);
                                 
                                 // Stop polling once connected
                                 clearInterval(this.pollingInterval);
@@ -1482,7 +1545,7 @@
                                 this.isStreamingActive = true;
                             }
                         } else if (result.success && !result.isActive) {
-                            console.log('🛑 Stream ended');
+                            console.log('Stream ended');
                             this.updateViewerUI('Stream has ended');
                             clearInterval(this.pollingInterval);
                             this.isStreamingActive = false;
@@ -1490,23 +1553,71 @@
                             this.updateViewerUI(`Waiting for stream... (${pollCount}/${maxPolls})`);
                         }
                     } catch (error) {
-                        console.error('❌ Error polling for offer:', error);
+                        console.error('Error polling for offer:', error);
                         this.updateViewerUI('Connection error - Retrying...');
                     }
                 }, 1000);
             },
 
-            // Enhanced disconnect with proper cleanup
-            disconnectViewer: async function() {
-                console.log('🔌 Disconnecting viewer...');
+            // Handle connection failure with reconnection
+            handleConnectionFailure: function() {
+                this.stopConnectionMetrics();
                 
+                // Auto-reconnect for viewers
+                if (!this.isInitiator && this.isStreamingActive) {
+                    setTimeout(() => {
+                        if (this.reconnectAttempts < this.maxReconnectAttempts) {
+                            this.reconnectAttempts++;
+                            console.log(`Reconnection attempt ${this.reconnectAttempts}`);
+                            this.reconnectAsViewer();
+                        }
+                    }, 2000 * this.reconnectAttempts);
+                }
+            },
+
+            // Reconnect as viewer
+            reconnectAsViewer: async function() {
+                if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                    console.log('Max reconnection attempts reached');
+                    this.updateViewerUI('Failed to reconnect after multiple attempts');
+                    return;
+                }
+
+                this.reconnectAttempts++;
+                console.log(`Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+
+                try {
+                    // Clean up existing connection
+                    if (this.peerConnection) {
+                        this.peerConnection.close();
+                        this.peerConnection = null;
+                    }
+
+                    if (this.pollingInterval) {
+                        clearInterval(this.pollingInterval);
+                    }
+
+                    // Reinitialize and reconnect
+                    this.initWebRTC(false);
+                    this.startPollingForOffer();
+                    
+                    this.updateViewerUI(`Reconnecting... (Attempt ${this.reconnectAttempts})`);
+                } catch (error) {
+                    console.error('Error during reconnection:', error);
+                    // Retry after delay
+                    setTimeout(() => this.reconnectAsViewer(), 2000 * this.reconnectAttempts);
+                }
+            },
+
+            // Enhanced disconnect with better cleanup
+            disconnectViewer: async function() {
                 // Notify backend that viewer is leaving
                 if (this.sessionId && authToken) {
                     try {
                         await API.leaveWebRTCSession(this.sessionId);
                         console.log('✅ Notified backend of viewer departure');
                     } catch (error) {
-                        console.log('ℹ️ Note: Could not notify backend of departure', error.message);
+                        console.log('Note: Could not notify backend of departure', error.message);
                     }
                 }
 
@@ -1530,15 +1641,12 @@
                 this.streamStartTime = null;
                 this.reconnectAttempts = 0;
                 this.isStreamingActive = false;
-                this.connectionState = 'disconnected';
                 
                 console.log('✅ Viewer completely disconnected and cleaned up');
             },
 
             // Enhanced close (for streamer)
             close: async function() {
-                console.log('🔌 Closing streamer...');
-                
                 if (this.peerConnection) {
                     this.peerConnection.close();
                     this.peerConnection = null;
@@ -1556,7 +1664,6 @@
                 this.streamStartTime = null;
                 this.isStreamingActive = false;
                 this.reconnectAttempts = 0;
-                this.connectionState = 'disconnected';
                 
                 // Update UI
                 document.getElementById('streaming-role').textContent = 'Not Connected';
@@ -1578,48 +1685,6 @@
                     } catch (error) {
                         console.error('Error getting viewer count:', error);
                     }
-                }
-            },
-
-            // Enhanced connection failure handling
-            handleConnectionFailure: function() {
-                this.stopConnectionMetrics();
-                
-                // Auto-reconnect for viewers
-                if (!this.isInitiator && this.isStreamingActive) {
-                    this.reconnectAttempts++;
-                    if (this.reconnectAttempts <= this.maxReconnectAttempts) {
-                        console.log(`🔄 Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
-                        setTimeout(() => {
-                            this.reconnectAsViewer();
-                        }, 2000 * this.reconnectAttempts);
-                    } else {
-                        console.log('❌ Max reconnection attempts reached');
-                        this.updateViewerUI('Failed to reconnect after multiple attempts');
-                    }
-                }
-            },
-
-            // Enhanced reconnect as viewer
-            reconnectAsViewer: async function() {
-                if (!this.sessionId) return;
-                
-                console.log(`🔄 Reconnecting as viewer to session: ${this.sessionId}`);
-                
-                try {
-                    // Clean up existing connection
-                    if (this.peerConnection) {
-                        this.peerConnection.close();
-                        this.peerConnection = null;
-                    }
-
-                    // Reinitialize and reconnect
-                    await this.initWebRTC(false);
-                    this.startPollingForOffer();
-                    
-                    this.updateViewerUI(`Reconnecting... (Attempt ${this.reconnectAttempts})`);
-                } catch (error) {
-                    console.error('❌ Error during reconnection:', error);
                 }
             },
 
@@ -2260,111 +2325,6 @@
             }
         };
 
-        // Auth Management
-        const AuthManager = {
-            isLoggedIn() {
-                return !!authToken;
-            },
-            
-            async login(credentials) {
-                try {
-                    console.log('Attempting login with:', credentials.email);
-                    const result = await API.login(credentials);
-                    this.setAuth(result.token, result.user);
-                    this.showAlert('Login successful!', 'success', 'login-alert');
-                    return result;
-                } catch (error) {
-                    console.error('Login error:', error);
-                    this.showAlert(error.message, 'error', 'login-alert');
-                    throw error;
-                }
-            },
-            
-            async register(userData) {
-                try {
-                    console.log('Attempting registration with:', userData.email);
-                    const result = await API.register(userData);
-                    this.setAuth(result.token, result.user);
-                    this.showAlert('Registration successful!', 'success', 'register-alert');
-                    return result;
-                } catch (error) {
-                    console.error('Registration error:', error);
-                    this.showAlert(error.message, 'error', 'register-alert');
-                    throw error;
-                }
-            },
-            
-            logout() {
-                // Clear stored data
-                localStorage.removeItem('authToken');
-                localStorage.removeItem('currentUser');
-                
-                // Stop any active streams
-                CameraManager.stopCamera();
-                WebRTCManager.close();
-                
-                // Reset state
-                authToken = null;
-                currentUser = null;
-                currentCameraId = null;
-                currentStreamId = null;
-                
-                // Show login page
-                UIManager.showLogin();
-            },
-            
-            setAuth(token, user) {
-                authToken = token;
-                currentUser = user;
-                localStorage.setItem('authToken', token);
-                localStorage.setItem('currentUser', JSON.stringify(user));
-                this.updateUI();
-            },
-            
-            loadFromStorage() {
-                const token = localStorage.getItem('authToken');
-                const user = localStorage.getItem('currentUser');
-                
-                if (token && user) {
-                    authToken = token;
-                    currentUser = JSON.parse(user);
-                    this.updateUI();
-                    return true;
-                }
-                return false;
-            },
-            
-            updateUI() {
-                const isAuthenticated = this.isLoggedIn();
-                
-                document.getElementById('login-page').classList.toggle('hidden', isAuthenticated);
-                document.getElementById('register-page').classList.toggle('hidden', isAuthenticated);
-                
-                // Show app sections if authenticated
-                if (isAuthenticated) {
-                    document.getElementById('user-welcome').textContent = `Hello, ${currentUser.name}`;
-                    UIManager.showDashboard();
-                } else {
-                    UIManager.showLogin();
-                    WebRTCManager.disconnectViewer();
-                    WebRTCManager.close();
-                }
-            },
-            
-            showAlert(message, type = 'error', containerId) {
-                const alertElement = document.getElementById(containerId);
-                if (alertElement) {
-                    alertElement.textContent = message;
-                    alertElement.className = `alert alert-${type}`;
-                    alertElement.classList.remove('hidden');
-                    
-                    setTimeout(() => {
-                        alertElement.classList.add('hidden');
-                    }, 5000);
-                }
-            }
-        };
-
         // Event Listeners
         document.addEventListener('DOMContentLoaded', function() {
             // Check if user is already logged in
@@ -2405,16 +2365,15 @@
                 UIManager.showLogin();
             });
             
-            // Login form - FIXED to prevent default submission
+            // Login form
             document.getElementById('login-form').addEventListener('submit', async function(e) {
                 e.preventDefault();
-                e.stopPropagation();
                 
                 const email = document.getElementById('login-email').value;
                 const password = document.getElementById('login-password').value;
                 
                 try {
-                    const result = await AuthManager.login({ email, password });
+                    const result = await API.login(email, password);
                     
                     if (result.success) {
                         authToken = result.token;
@@ -2427,16 +2386,17 @@
                         // Update UI
                         document.getElementById('user-welcome').textContent = `Hello, ${currentUser.name}`;
                         UIManager.showDashboard();
+                    } else {
+                        UIManager.showAlert('Invalid email or password', 'error', 'login-alert');
                     }
                 } catch (error) {
-                    console.error('Login failed:', error);
+                    UIManager.showAlert('Login failed: ' + error.message, 'error', 'login-alert');
                 }
             });
             
-            // Register form - FIXED to prevent default submission
+            // Register form
             document.getElementById('register-form').addEventListener('submit', async function(e) {
                 e.preventDefault();
-                e.stopPropagation();
                 
                 const name = document.getElementById('register-name').value;
                 const email = document.getElementById('register-email').value;
@@ -2445,14 +2405,15 @@
                 
                 // Validate passwords match
                 if (password !== confirmPassword) {
-                    AuthManager.showAlert('Passwords do not match', 'error', 'register-alert');
+                    UIManager.showAlert('Passwords do not match', 'error', 'register-alert');
                     return;
                 }
                 
                 try {
-                    const result = await AuthManager.register({ name, email, password });
+                    const result = await API.register(name, email, password);
                     
                     if (result.success) {
+                        UIManager.hideAlert('register-alert');
                         document.getElementById('register-success').classList.remove('hidden');
                         
                         // Clear form
@@ -2462,15 +2423,32 @@
                         setTimeout(() => {
                             UIManager.showLogin();
                         }, 2000);
+                    } else {
+                        UIManager.showAlert(result.error || 'Registration failed', 'error', 'register-alert');
                     }
                 } catch (error) {
-                    console.error('Registration failed:', error);
+                    UIManager.showAlert('Registration failed: ' + error.message, 'error', 'register-alert');
                 }
             });
             
             // Logout
             document.getElementById('logout-btn').addEventListener('click', function() {
-                AuthManager.logout();
+                // Clear stored data
+                localStorage.removeItem('authToken');
+                localStorage.removeItem('currentUser');
+                
+                // Stop any active streams
+                CameraManager.stopCamera();
+                WebRTCManager.close();
+                
+                // Reset state
+                authToken = null;
+                currentUser = null;
+                currentCameraId = null;
+                currentStreamId = null;
+                
+                // Show login page
+                UIManager.showLogin();
             });
             
             // Add camera button
@@ -2723,15 +2701,6 @@
             // Save settings
             document.getElementById('save-settings').addEventListener('click', function() {
                 alert('Settings saved successfully!');
-            });
-
-            // Prevent all form submissions
-            document.querySelectorAll('form').forEach(form => {
-                form.addEventListener('submit', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    return false;
-                });
             });
         });
 

@@ -1312,6 +1312,7 @@ if (!newSession.success) {
 
         // Initialize WebRTC and start polling for the streamer's offer
         this.initWebRTC(false);
+        console.log("🔄 Joining WebRTC stream with fresh connection:", this.sessionId);
         this.updateViewerUI("Connecting to WebRTC stream...");
         this.startPollingForOffer();
 

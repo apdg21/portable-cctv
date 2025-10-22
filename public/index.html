@@ -1285,44 +1285,42 @@
                 }, 2000); // Poll every 2 seconds
             },
 
-            // Enhanced join stream with proper cleanup
-            joinStream: async function(streamId) {
-                try {
-                    // ✅ FIX #3: Always create new RTCPeerConnection when reconnecting
-                    if (this.peerConnection) {
-                        console.log('🔄 Cleaning up previous peer connection for reconnection');
-                        this.peerConnection.close();
-                        this.peerConnection = null;
-                    }
+            // 🚀 Join WebRTC stream (Viewer side) — always uses a fresh session on reconnect
+joinStream: async function(streamId, cameraId = null, cameraName = "Remote Camera") {
+    try {
+        // Clean up any previous connection
+        if (this.peerConnection) {
+            console.log("🔄 Cleaning up old viewer connection before rejoining...");
+            this.peerConnection.close();
+            this.peerConnection = null;
+        }
 
-                    this.sessionId = streamId;
-                    this.isInitiator = false;
-                    this.reconnectAttempts = 0;
-                    
-                    // Initialize fresh WebRTC as viewer
-                    this.initWebRTC(false);
-                    
-                    console.log('🔄 Joining WebRTC stream with fresh connection:', streamId);
-                    this.updateViewerUI('Connecting to WebRTC stream...');
-                    
-                    // ✅ FIX: Clear video element before reconnecting
-                    const videoElement = document.getElementById('camera-feed');
-                    if (videoElement) {
-                        videoElement.pause();
-                        videoElement.srcObject = null;
-                        videoElement.classList.add('hidden');
-                        document.getElementById('camera-placeholder').classList.remove('hidden');
-                    }
-                    
-                    // Start polling for streamer's offer
-                    this.startPollingForOffer();
+        if (this.pollingInterval) clearInterval(this.pollingInterval);
 
-                    return { success: true };
-                } catch (error) {
-                    console.error('Error joining WebRTC stream:', error);
-                    return { success: false, error: error.message };
-                }
-            },
+        this.isInitiator = false;
+        this.reconnectAttempts = 0;
+        this.isStreamingActive = false;
+
+        // ✅ Always create a new WebRTC session for this reconnect
+        const newSession = await API.createWebRTCSession(cameraId || streamId, cameraName);
+        if (!newSession.success) {
+            throw new Error("Failed to create new WebRTC session for viewer reconnect");
+        }
+
+        this.sessionId = newSession.sessionId;
+        console.log("🔁 Viewer joining fresh session:", this.sessionId);
+
+        // Initialize WebRTC and start polling for the streamer's offer
+        this.initWebRTC(false);
+        this.updateViewerUI("Connecting to WebRTC stream...");
+        this.startPollingForOffer();
+
+        return { success: true, sessionId: this.sessionId };
+    } catch (error) {
+        console.error("Error joining WebRTC stream:", error);
+        return { success: false, error: error.message };
+    }
+},
 
             // Join stream for preview (lightweight connection)
             joinStreamForPreview: async function(streamId, videoElement) {
@@ -1575,38 +1573,44 @@
                 }
             },
 
-            // ✅ Improved reconnect for viewers
-            reconnectAsViewer: async function() {
-                if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-                    console.log('Max reconnection attempts reached');
-                    this.updateViewerUI('Failed to reconnect after multiple attempts');
-                    return;
-                }
+           // ♻️ Automatic viewer reconnection using a new session
+reconnectAsViewer: async function(cameraId = null, cameraName = "Remote Camera") {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        console.log("❌ Max reconnection attempts reached");
+        this.updateViewerUI("Failed to reconnect after multiple attempts");
+        return;
+    }
 
-                this.reconnectAttempts++;
-                const delay = 1000 * this.reconnectAttempts;
-                console.log(`🔄 Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} (delay ${delay}ms)`);
+    this.reconnectAttempts++;
+    console.log(`🔁 Viewer reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
 
-                try {
-                    // Wait a short delay before reconnecting
-                    await new Promise(r => setTimeout(r, delay));
+    try {
+        // Fully close any old connection
+        if (this.peerConnection) {
+            this.peerConnection.close();
+            this.peerConnection = null;
+        }
+        if (this.pollingInterval) clearInterval(this.pollingInterval);
 
-                    // Fully cleanup before reinit
-                    if (this.peerConnection) {
-                        this.peerConnection.close();
-                        this.peerConnection = null;
-                    }
-                    if (this.pollingInterval) clearInterval(this.pollingInterval);
+        // ✅ Create a new WebRTC session for reconnect
+        const newSession = await API.createWebRTCSession(cameraId || this.currentCameraId, cameraName);
+        if (!newSession.success) {
+            throw new Error("Failed to create new WebRTC session for reconnect");
+        }
 
-                    // Restart fresh WebRTC session lookup
-                    this.initWebRTC(false);
-                    this.startPollingForOffer();
-                    this.updateViewerUI(`Reconnecting... (Attempt ${this.reconnectAttempts})`);
-                } catch (error) {
-                    console.error('Error during reconnection:', error);
-                    setTimeout(() => this.reconnectAsViewer(), delay * 1.5);
-                }
-            },
+        this.sessionId = newSession.sessionId;
+        console.log("🆕 New session for reconnect:", this.sessionId);
+
+        // Reinitialize connection and start polling
+        this.initWebRTC(false);
+        this.startPollingForOffer();
+        this.updateViewerUI(`Reconnecting... (Attempt ${this.reconnectAttempts})`);
+    } catch (error) {
+        console.error("Error during reconnect:", error);
+        // Retry with exponential backoff
+        setTimeout(() => this.reconnectAsViewer(cameraId, cameraName), 2000 * this.reconnectAttempts);
+    }
+},
 
             // Enhanced disconnect with better cleanup
             disconnectViewer: async function() {

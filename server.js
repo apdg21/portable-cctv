@@ -1169,4 +1169,3 @@ app.listen(PORT, () => {
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🌐 Web interface: http://localhost:${PORT}`);
 });
-[file content end]

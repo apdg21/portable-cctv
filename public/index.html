@@ -1575,39 +1575,38 @@
                 }
             },
 
-            // Reconnect as viewer
-            reconnectAsViewer: async function() {
-                if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-                    console.log('Max reconnection attempts reached');
-                    this.updateViewerUI('Failed to reconnect after multiple attempts');
-                    return;
-                }
+            // ✅ Improved reconnect for viewers
+reconnectAsViewer: async function() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        console.log('Max reconnection attempts reached');
+        this.updateViewerUI('Failed to reconnect after multiple attempts');
+        return;
+    }
 
-                this.reconnectAttempts++;
-                console.log(`Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+    this.reconnectAttempts++;
+    const delay = 1000 * this.reconnectAttempts;
+    console.log(`🔄 Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} (delay ${delay}ms)`);
 
-                try {
-                    // Clean up existing connection
-                    if (this.peerConnection) {
-                        this.peerConnection.close();
-                        this.peerConnection = null;
-                    }
+    try {
+        // Wait a short delay before reconnecting
+        await new Promise(r => setTimeout(r, delay));
 
-                    if (this.pollingInterval) {
-                        clearInterval(this.pollingInterval);
-                    }
+        // Fully cleanup before reinit
+        if (this.peerConnection) {
+            this.peerConnection.close();
+            this.peerConnection = null;
+        }
+        if (this.pollingInterval) clearInterval(this.pollingInterval);
 
-                    // Reinitialize and reconnect
-                    this.initWebRTC(false);
-                    this.startPollingForOffer();
-                    
-                    this.updateViewerUI(`Reconnecting... (Attempt ${this.reconnectAttempts})`);
-                } catch (error) {
-                    console.error('Error during reconnection:', error);
-                    // Retry after delay
-                    setTimeout(() => this.reconnectAsViewer(), 2000 * this.reconnectAttempts);
-                }
-            },
+        // Restart fresh WebRTC session lookup
+        this.initWebRTC(false);
+        this.startPollingForOffer();
+        this.updateViewerUI(`Reconnecting... (Attempt ${this.reconnectAttempts})`);
+    } catch (error) {
+        console.error('Error during reconnection:', error);
+        setTimeout(() => this.reconnectAsViewer(), delay * 1.5);
+    }
+},
 
             // Enhanced disconnect with better cleanup
             disconnectViewer: async function() {
@@ -2120,6 +2119,10 @@
                             const camera = userCameras.find(c => c.id == cameraId);
                             
                             if (camera) {
+
+                                // 🧹 Always cleanup old viewer session before new one
+                                await WebRTCManager.disconnectViewer();
+                                
                                 UIManager.showLiveView(cameraId, camera.name, true);
                                 
                                 // Join the existing WebRTC stream

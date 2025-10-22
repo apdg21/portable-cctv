@@ -704,6 +704,9 @@ app.post('/api/webrtc/session/:sessionId/offer', authenticateToken, async (req, 
   }
 });
 
+// Configuration
+const INACTIVITY_THRESHOLD_MS = 30000; // 30s - tuneable
+
 // Enhanced answer storage for multiple viewers WITH PROPER RECONNECTION HANDLING
 app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req, res) => {
   try {
@@ -716,32 +719,33 @@ app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req,
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
 
-    // ✅ FIX: Only reset if viewer was truly inactive, not just reconnecting
-    const viewerLastActivity = session.viewers.get(viewerId);
     const now = Date.now();
-    
-    if (viewerLastActivity && (now - viewerLastActivity > 30000)) {
+    const viewerLastActivity = session.viewers.get(viewerId);
+
+    // Only reset if viewer was inactive for a while
+    if (viewerLastActivity && (now - viewerLastActivity > INACTIVITY_THRESHOLD_MS)) {
       console.log(`🔄 Viewer ${viewerId} reconnecting after inactivity - resetting previous WebRTC data`);
       session.answers.delete(viewerId);
       session.candidates.delete(viewerId);
+      session.viewers.delete(viewerId);
     }
 
-    // Store answer for this specific viewer
+    // store viewer-specific answer
     session.answers.set(viewerId, answer);
-    session.viewers.set(viewerId, now); // Track last activity
+    session.viewers.set(viewerId, now);
     session.lastActivity = now;
-    
-    // Update viewer count in active streams
+
+    // update viewer count on active stream object if present
     const stream = activeStreams.get(sessionId);
     if (stream) {
       stream.viewerCount = session.viewers.size;
     }
-    
+
     console.log(`✅ Answer stored for viewer ${viewerId} in session: ${sessionId}`);
-    res.json({ success: true });
+    return res.json({ success: true });
   } catch (error) {
     console.error('Error storing answer:', error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 });
 
@@ -751,39 +755,39 @@ app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (r
     const { sessionId } = req.params;
     const { candidate } = req.body;
     const viewerId = req.user.userId;
-    
+
     const session = webrtcSessions.get(sessionId);
     if (!session) {
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
 
-    // ✅ FIX: Only clear candidates if viewer was marked as inactive/left
-    // Don't clear just because answer doesn't exist yet - they might arrive in any order
-    const viewerLastActivity = session.viewers.get(viewerId);
     const now = Date.now();
-    
-    // If viewer was inactive for a while (more than 30 seconds), clear old data
-    if (viewerLastActivity && (now - viewerLastActivity > 30000)) {
+    const viewerLastActivity = session.viewers.get(viewerId);
+
+    // Only clear old data if viewer was truly inactive for a while
+    if (viewerLastActivity && (now - viewerLastActivity > INACTIVITY_THRESHOLD_MS)) {
       console.log(`🔄 Viewer ${viewerId} reconnecting after inactivity - clearing old WebRTC data`);
       session.answers.delete(viewerId);
       session.candidates.delete(viewerId);
+      session.viewers.delete(viewerId);
     }
 
-    // Initialize candidates array for this viewer if it doesn't exist
     if (!session.candidates.has(viewerId)) {
       session.candidates.set(viewerId, []);
     }
-    
-    // Add the candidate
+
+    // push candidate (ensure the data shape matches what the client sends)
     session.candidates.get(viewerId).push(candidate);
-    session.viewers.set(viewerId, now); // Update last activity
+
+    // update last activity timestamp for the viewer
+    session.viewers.set(viewerId, now);
     session.lastActivity = now;
-    
+
     console.log(`✅ ICE candidate added for viewer ${viewerId} in session: ${sessionId}`);
-    res.json({ success: true });
+    return res.json({ success: true });
   } catch (error) {
     console.error('Error adding ICE candidate:', error);
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 });
 
@@ -1165,3 +1169,4 @@ app.listen(PORT, () => {
   console.log(`🔗 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🌐 Web interface: http://localhost:${PORT}`);
 });
+[file content end]

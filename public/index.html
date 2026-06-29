@@ -1250,9 +1250,26 @@
                         if (answersResponse.success && answersResponse.answers.length > 0) {
                             for (const answer of answersResponse.answers) {
                                 try {
-                                    console.log('Processing viewer answer:', answer.type);
-                                    await this.peerConnection.setRemoteDescription(answer);
-                                    console.log('Remote description set successfully');
+                                    const sigState = this.peerConnection.signalingState;
+                                    console.log('Processing viewer answer, signaling state:', sigState);
+
+                                    if (sigState === 'have-local-offer') {
+                                        // Normal first-time connection
+                                        await this.peerConnection.setRemoteDescription(answer);
+                                        console.log('Remote description set successfully');
+                                    } else if (sigState === 'stable') {
+                                        // Viewer reconnected after tab switch - need a fresh negotiation
+                                        console.log('🔄 Viewer reconnecting - restarting negotiation');
+                                        const offerOptions = { offerToReceiveAudio: false, offerToReceiveVideo: false };
+                                        const newOffer = await this.peerConnection.createOffer(offerOptions);
+                                        await this.peerConnection.setLocalDescription(newOffer);
+                                        await API.sendWebRTCOffer(this.sessionId, newOffer);
+                                        // Now we're back in have-local-offer, set the viewer's answer
+                                        await this.peerConnection.setRemoteDescription(answer);
+                                        console.log('✅ Reconnection negotiation complete');
+                                    } else {
+                                        console.warn('Unexpected signaling state for answer:', sigState);
+                                    }
                                 } catch (error) {
                                     console.error('Error setting remote description:', error);
                                 }
@@ -2610,6 +2627,20 @@
                                 document.getElementById('stream-status').textContent = 'WebRTC Streaming Active';
                                 document.getElementById('start-live-camera').classList.add('hidden');
                                 document.getElementById('stop-live-camera').classList.remove('hidden');
+
+                                // FIX: Show the local camera feed on the streamer's screen
+                                const videoElement = document.getElementById('camera-feed');
+                                const placeholderElement = document.getElementById('camera-placeholder');
+                                if (videoElement && CameraManager.stream) {
+                                    videoElement.srcObject = CameraManager.stream;
+                                    videoElement.classList.remove('hidden');
+                                    videoElement.muted = true;
+                                    videoElement.play().catch(e => {
+                                        videoElement.muted = true;
+                                        videoElement.play();
+                                    });
+                                    if (placeholderElement) placeholderElement.classList.add('hidden');
+                                }
                             }, 1000);
                         } else {
                             statusElement.innerHTML = `<i class="fas fa-exclamation-triangle"></i> Camera created but streaming failed: ${streamResult.error}`;
@@ -2722,21 +2753,25 @@
             }
         });
 
-        // Also handle page visibility changes
-        document.addEventListener('visibilitychange', function() {
-            if (document.hidden && WebRTCManager.sessionId && !WebRTCManager.isInitiator) {
-                // Page is hidden, notify backend after a short delay
-                setTimeout(async () => {
-                    if (document.hidden) { // Still hidden after delay
-                        try {
-                            await API.leaveWebRTCSession(WebRTCManager.sessionId);
-                            console.log('✅ Notified backend of viewer departure (page hidden)');
-                        } catch (error) {
-                            console.log('Note: Could not send leave notification for hidden page');
-                        }
-                    }
-                }, 1000);
+        // Handle page visibility changes - reconnect viewer when tab becomes visible again
+        document.addEventListener('visibilitychange', async function() {
+            if (!WebRTCManager.sessionId || WebRTCManager.isInitiator) return;
+
+            if (!document.hidden) {
+                // Tab came back into focus - check if WebRTC connection is still alive
+                const state = WebRTCManager.peerConnection
+                    ? WebRTCManager.peerConnection.connectionState
+                    : 'closed';
+                console.log('👁️ Tab visible again, WebRTC state:', state);
+
+                if (state === 'failed' || state === 'closed' || state === 'disconnected') {
+                    console.log('🔄 Reconnecting viewer after tab switch...');
+                    WebRTCManager.reconnectAttempts = 0;
+                    WebRTCManager.reconnectAsViewer();
+                }
             }
+            // Do NOT call leaveWebRTCSession on hide - it destroys signaling state on the server
+            // and prevents reconnection. Only clean up on actual page unload (beforeunload).
         });
     </script>
 </body>

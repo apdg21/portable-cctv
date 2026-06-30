@@ -1001,6 +1001,20 @@
         let userEvents = [];
         let isStreaming = false;
 
+        // Per-tab client identifier - distinguishes this browser tab/device from
+        // any other tab/device logged into the SAME account. This is what lets
+        // the server tell a streamer's tab apart from a viewer's tab (and one
+        // viewer's tab apart from another), even though they share one login.
+        function getOrCreateClientId() {
+            let id = sessionStorage.getItem('clientId');
+            if (!id) {
+                id = 'client-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+                sessionStorage.setItem('clientId', id);
+            }
+            return id;
+        }
+        const clientId = getOrCreateClientId();
+
         // API Helper Functions
         const API = {
             // Make API request with authentication
@@ -1009,6 +1023,7 @@
                 const config = {
                     headers: {
                         'Content-Type': 'application/json',
+                        'X-Client-Id': clientId,
                     },
                     ...options
                 };
@@ -1099,10 +1114,10 @@
                 });
             },
             
-            sendWebRTCOffer: async function(sessionId, offer) {
+            sendWebRTCOffer: async function(sessionId, offer, viewerId) {
                 return this.request(`/webrtc/session/${sessionId}/offer`, {
                     method: 'POST',
-                    body: JSON.stringify({ offer })
+                    body: JSON.stringify({ offer, viewerId })
                 });
             },
             
@@ -1287,20 +1302,20 @@
                     console.log(`📤 Sending offer to viewer ${viewerId}`);
                     const offer = await pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
                     await pc.setLocalDescription(offer);
-                    // Store the offer on the server so the viewer can pick it up
-                    await API.sendWebRTCOffer(this.sessionId, offer);
+                    // Store the offer on the server, targeted at this specific viewer
+                    await API.sendWebRTCOffer(this.sessionId, offer, viewerId);
                     this.sentOffers.add(viewerId);
                 }
 
-                // Now apply the viewer's answer
-                if (pc.signalingState === 'have-local-offer') {
+                // Now apply the viewer's answer, if we have one yet
+                if (viewerAnswer && pc.signalingState === 'have-local-offer') {
                     try {
                         await pc.setRemoteDescription(viewerAnswer);
                         console.log(`✅ Offer/answer complete for viewer ${viewerId}`);
                     } catch (err) {
                         console.error(`Error setting remote description for viewer ${viewerId}:`, err);
                     }
-                } else {
+                } else if (viewerAnswer) {
                     console.warn(`Unexpected signaling state ${pc.signalingState} for viewer ${viewerId}`);
                 }
             },
@@ -1327,7 +1342,7 @@
                     // Update UI for streamer
                     this.updateStreamerUI();
                     
-                    // Start polling for viewer answers and ICE candidates
+                    // Start polling for new viewers, their answers, and ICE candidates
                     this.startPollingForViewers();
 
                     // Keep screen awake while streaming
@@ -1350,7 +1365,8 @@
                 }
             },
 
-            // Polling loop: handle new viewers and their ICE candidates
+            // Polling loop: discover new viewers and proactively offer them a connection,
+            // process their answers, and relay ICE candidates per-viewer.
             startPollingForViewers: function() {
                 if (this.pollingInterval) clearInterval(this.pollingInterval);
                 
@@ -1358,24 +1374,40 @@
                     try {
                         if (!this.isInitiator || !this.sessionId) return;
 
-                        // Each entry: { viewerId, answer }
+                        // 1. Discover viewers who don't have an offer yet (new or reconnected)
+                        const statsResponse = await API.getWebRTCSessionStats(this.sessionId);
+                        if (statsResponse.success && Array.isArray(statsResponse.stats.viewerIds)) {
+                            for (const viewerId of statsResponse.stats.viewerIds) {
+                                if (viewerId === clientId) continue; // never offer to ourselves
+                                const pc = this.viewerConnections.get(viewerId);
+                                const needsOffer = !pc || pc.connectionState === 'failed'
+                                    || pc.connectionState === 'closed' || !this.sentOffers.has(viewerId);
+                                if (needsOffer) {
+                                    console.log(`👋 New/reconnecting viewer detected: ${viewerId}`);
+                                    await this._negotiateWithViewer(viewerId, null);
+                                }
+                            }
+                        }
+
+                        // 2. Each entry: { viewerId, answer }
                         const answersResponse = await API.getWebRTCSessionAnswers(this.sessionId);
                         if (answersResponse.success && answersResponse.answers.length > 0) {
                             for (const { viewerId, answer } of answersResponse.answers) {
+                                if (viewerId === clientId) continue;
                                 const pc = this.viewerConnections.get(viewerId);
-                                // Only negotiate if we don't have a live connection for this viewer
-                                if (!pc || pc.connectionState === 'failed' || pc.connectionState === 'closed'
-                                    || (pc.signalingState !== 'stable' && !this.sentOffers.has(viewerId))) {
+                                // Only apply if we're still waiting on this viewer's answer
+                                if (pc && pc.signalingState === 'have-local-offer') {
                                     console.log(`🔄 Processing answer from viewer ${viewerId}`);
                                     await this._negotiateWithViewer(viewerId, answer);
                                 }
                             }
                         }
 
-                        // Each entry: { viewerId, candidate }
+                        // 3. Each entry: { viewerId, candidate }
                         const candidatesResponse = await API.getWebRTCSessionCandidates(this.sessionId);
                         if (candidatesResponse.success && candidatesResponse.candidates.length > 0) {
                             for (const { viewerId, candidate } of candidatesResponse.candidates) {
+                                if (viewerId === clientId) continue;
                                 const pc = this.viewerConnections.get(viewerId);
                                 if (pc && pc.remoteDescription) {
                                     try {

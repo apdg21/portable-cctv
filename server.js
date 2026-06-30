@@ -337,6 +337,28 @@ app.post('/api/cameras', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'Name and location are required' });
     }
 
+    // Reuse an existing camera if one with the same name+location already
+    // exists for this user (avoids duplicate entries when Camera Auto Mode
+    // re-registers on every page load/reboot).
+    const existingRows = await db.getRows('cameras');
+    const existingRow = existingRows.find(row =>
+      row[1] === req.user.userId && row[2] === name && row[3] === location && row[6] !== 'deleted'
+    );
+
+    if (existingRow) {
+      const existingCamera = {
+        id: existingRow[0],
+        userId: existingRow[1],
+        name: existingRow[2],
+        location: existingRow[3],
+        streamId: existingRow[4],
+        quality: existingRow[5],
+        status: existingRow[6],
+        createdAt: existingRow[7]
+      };
+      return res.json({ success: true, camera: existingCamera, reused: true });
+    }
+
     const camera = {
       id: Date.now().toString(),
       userId: req.user.userId,
@@ -830,10 +852,10 @@ app.get('/api/webrtc/session/:sessionId/candidates', authenticateToken, async (r
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
 
-    // Get all candidates from all viewers
+    // Get all candidates from all viewers, keyed by viewerId
     const allCandidates = [];
     for (const [viewerId, candidates] of session.candidates.entries()) {
-      allCandidates.push(...candidates);
+      candidates.forEach(candidate => allCandidates.push({ viewerId, candidate }));
     }
 
     res.json({ 
@@ -856,8 +878,11 @@ app.get('/api/webrtc/session/:sessionId/answers', authenticateToken, async (req,
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
 
-    // Get all answers from viewers
-    const answers = Array.from(session.answers.values());
+    // Get all answers from viewers, keyed by viewerId
+    const answers = Array.from(session.answers.entries()).map(([viewerId, answer]) => ({
+      viewerId,
+      answer
+    }));
 
     res.json({ 
       success: true, 

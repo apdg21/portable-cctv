@@ -608,10 +608,11 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
       cameraId,
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
+      streamerClientId: req.clientId, // per-tab ID of the streaming device
       createdAt: new Date().toISOString(),
       offers: new Map(), // Store offer per viewer (multi-viewer support)
       answers: new Map(), // Store multiple answers for multiple viewers
-      candidates: new Map(), // Store candidates per viewer
+      candidates: new Map(), // Store candidates per viewer (includes streamer's own)
       viewers: new Map(), // Track active viewers with last activity
       isActive: true,
       lastActivity: Date.now()
@@ -666,10 +667,11 @@ app.post('/api/webrtc/session', authenticateToken, async (req, res) => {
       cameraId,
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
+      streamerClientId: req.clientId, // per-tab ID of the streaming device
       createdAt: new Date().toISOString(),
       offers: new Map(), // Store offer per viewer (multi-viewer support)
       answers: new Map(), // Store multiple answers for multiple viewers
-      candidates: new Map(), // Store candidates per viewer
+      candidates: new Map(), // Store candidates per viewer (includes streamer's own)
       viewers: new Map(), // Track active viewers with last activity
       isActive: true,
       lastActivity: Date.now()
@@ -944,7 +946,10 @@ app.get('/api/webrtc/session/:streamId', authenticateToken, async (req, res) => 
     // Get viewer-specific data
     const viewerOffer = session.offers.get(viewerId) || session.offers.get('__broadcast__') || null;
     const viewerAnswer = session.answers.get(viewerId);
-    const viewerCandidates = session.candidates.get(viewerId) || [];
+    // Viewers need the STREAMER's ICE candidates (stored under streamerClientId),
+    // not their own candidates (which are stored under their own clientId).
+    const streamerClientId = session.streamerClientId;
+    const streamerCandidates = (streamerClientId && session.candidates.get(streamerClientId)) || [];
 
     res.json({ 
       success: true, 
@@ -954,7 +959,7 @@ app.get('/api/webrtc/session/:streamId', authenticateToken, async (req, res) => 
         cameraName: session.cameraName,
         offer: viewerOffer,
         answer: viewerAnswer,
-        candidates: viewerCandidates,
+        candidates: streamerCandidates,
         isActive: session.isActive,
         viewerCount: session.viewers.size
       }
@@ -1002,13 +1007,15 @@ app.get('/api/webrtc/session/:streamId/poll', authenticateToken, async (req, res
 
     // Check if viewer has already submitted an answer
     const hasViewerAnswer = session.answers.has(viewerId);
-    const viewerCandidates = session.candidates.get(viewerId) || [];
+    // Return streamer's ICE candidates so viewer can use them
+    const pollStreamerClientId = session.streamerClientId;
+    const pollStreamerCandidates = (pollStreamerClientId && session.candidates.get(pollStreamerClientId)) || [];
 
     res.json({ 
       success: true, 
       hasOffer: session.offers.has(viewerId) || session.offers.has('__broadcast__'),
       hasAnswer: hasViewerAnswer,
-      candidates: viewerCandidates,
+      candidates: pollStreamerCandidates,
       isActive: session.isActive,
       viewerCount: session.viewers.size
     });

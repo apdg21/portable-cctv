@@ -881,6 +881,9 @@
                         <i class="fas fa-video fa-5x"></i>
                         <p style="margin-top: 10px;" id="placeholder-text">Connecting to stream...</p>
                     </div>
+                    <button id="unmute-prompt-btn" class="hidden" style="position:absolute; bottom:60px; left:50%; transform:translateX(-50%); z-index:5; padding:10px 18px; border-radius:20px; background:rgba(0,0,0,0.75); color:#fff; border:1px solid rgba(255,255,255,0.4); cursor:pointer;">
+                        <i class="fas fa-volume-mute"></i> Tap to enable sound
+                    </button>
                     <div class="streaming-indicator" id="streaming-role">Not Connected</div>
                     <div class="video-controls">
                         <!-- Streamer controls (only shown when user is streaming) -->
@@ -1001,6 +1004,20 @@
         let userEvents = [];
         let isStreaming = false;
 
+        // Per-tab client identifier - distinguishes this browser tab/device from
+        // any other tab/device logged into the SAME account. This is what lets
+        // the server tell a streamer's tab apart from a viewer's tab (and one
+        // viewer's tab apart from another), even though they share one login.
+        function getOrCreateClientId() {
+            let id = sessionStorage.getItem('clientId');
+            if (!id) {
+                id = 'client-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+                sessionStorage.setItem('clientId', id);
+            }
+            return id;
+        }
+        const clientId = getOrCreateClientId();
+
         // API Helper Functions
         const API = {
             // Make API request with authentication
@@ -1009,6 +1026,7 @@
                 const config = {
                     headers: {
                         'Content-Type': 'application/json',
+                        'X-Client-Id': clientId,
                     },
                     ...options
                 };
@@ -1099,10 +1117,10 @@
                 });
             },
             
-            sendWebRTCOffer: async function(sessionId, offer) {
+            sendWebRTCOffer: async function(sessionId, offer, viewerId) {
                 return this.request(`/webrtc/session/${sessionId}/offer`, {
                     method: 'POST',
-                    body: JSON.stringify({ offer })
+                    body: JSON.stringify({ offer, viewerId })
                 });
             },
             
@@ -1285,23 +1303,46 @@
                 // If we haven't sent an offer to this viewer yet, create+send one first
                 if (!this.sentOffers.has(viewerId) || sigState === 'stable') {
                     console.log(`📤 Sending offer to viewer ${viewerId}`);
-                    const offer = await pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
+                    const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
                     await pc.setLocalDescription(offer);
-                    // Store the offer on the server so the viewer can pick it up
-                    await API.sendWebRTCOffer(this.sessionId, offer);
+                    // Store the offer on the server, targeted at this specific viewer
+                    await API.sendWebRTCOffer(this.sessionId, offer, viewerId);
                     this.sentOffers.add(viewerId);
                 }
 
-                // Now apply the viewer's answer
-                if (pc.signalingState === 'have-local-offer') {
+                // Now apply the viewer's answer, if we have one yet
+                if (viewerAnswer && pc.signalingState === 'have-local-offer') {
                     try {
                         await pc.setRemoteDescription(viewerAnswer);
                         console.log(`✅ Offer/answer complete for viewer ${viewerId}`);
                     } catch (err) {
                         console.error(`Error setting remote description for viewer ${viewerId}:`, err);
                     }
-                } else {
+                } else if (viewerAnswer) {
                     console.warn(`Unexpected signaling state ${pc.signalingState} for viewer ${viewerId}`);
+                }
+            },
+
+            // Re-show the streamer's own local feed after navigating back to this page
+            // (e.g. after visiting Dashboard/Events and returning). Does NOT touch any
+            // active viewer connections - they keep running in the background regardless.
+            returnToOwnLiveView: function(cameraId, cameraName) {
+                UIManager.showLiveView(cameraId, cameraName, false);
+                document.getElementById('stream-status').textContent = 'WebRTC Streaming Active';
+                document.getElementById('start-live-camera').classList.add('hidden');
+                document.getElementById('stop-live-camera').classList.remove('hidden');
+
+                const videoElement = document.getElementById('camera-feed');
+                const placeholderElement = document.getElementById('camera-placeholder');
+                if (videoElement && this.localStream) {
+                    videoElement.srcObject = this.localStream;
+                    videoElement.classList.remove('hidden');
+                    videoElement.muted = true;
+                    videoElement.play().catch(() => {
+                        videoElement.muted = true;
+                        videoElement.play();
+                    });
+                    if (placeholderElement) placeholderElement.classList.add('hidden');
                 }
             },
 
@@ -1327,7 +1368,7 @@
                     // Update UI for streamer
                     this.updateStreamerUI();
                     
-                    // Start polling for viewer answers and ICE candidates
+                    // Start polling for new viewers, their answers, and ICE candidates
                     this.startPollingForViewers();
 
                     // Keep screen awake while streaming
@@ -1350,7 +1391,8 @@
                 }
             },
 
-            // Polling loop: handle new viewers and their ICE candidates
+            // Polling loop: discover new viewers and proactively offer them a connection,
+            // process their answers, and relay ICE candidates per-viewer.
             startPollingForViewers: function() {
                 if (this.pollingInterval) clearInterval(this.pollingInterval);
                 
@@ -1358,24 +1400,40 @@
                     try {
                         if (!this.isInitiator || !this.sessionId) return;
 
-                        // Each entry: { viewerId, answer }
+                        // 1. Discover viewers who don't have an offer yet (new or reconnected)
+                        const statsResponse = await API.getWebRTCSessionStats(this.sessionId);
+                        if (statsResponse.success && Array.isArray(statsResponse.stats.viewerIds)) {
+                            for (const viewerId of statsResponse.stats.viewerIds) {
+                                if (viewerId === clientId) continue; // never offer to ourselves
+                                const pc = this.viewerConnections.get(viewerId);
+                                const needsOffer = !pc || pc.connectionState === 'failed'
+                                    || pc.connectionState === 'closed' || !this.sentOffers.has(viewerId);
+                                if (needsOffer) {
+                                    console.log(`👋 New/reconnecting viewer detected: ${viewerId}`);
+                                    await this._negotiateWithViewer(viewerId, null);
+                                }
+                            }
+                        }
+
+                        // 2. Each entry: { viewerId, answer }
                         const answersResponse = await API.getWebRTCSessionAnswers(this.sessionId);
                         if (answersResponse.success && answersResponse.answers.length > 0) {
                             for (const { viewerId, answer } of answersResponse.answers) {
+                                if (viewerId === clientId) continue;
                                 const pc = this.viewerConnections.get(viewerId);
-                                // Only negotiate if we don't have a live connection for this viewer
-                                if (!pc || pc.connectionState === 'failed' || pc.connectionState === 'closed'
-                                    || (pc.signalingState !== 'stable' && !this.sentOffers.has(viewerId))) {
+                                // Only apply if we're still waiting on this viewer's answer
+                                if (pc && pc.signalingState === 'have-local-offer') {
                                     console.log(`🔄 Processing answer from viewer ${viewerId}`);
                                     await this._negotiateWithViewer(viewerId, answer);
                                 }
                             }
                         }
 
-                        // Each entry: { viewerId, candidate }
+                        // 3. Each entry: { viewerId, candidate }
                         const candidatesResponse = await API.getWebRTCSessionCandidates(this.sessionId);
                         if (candidatesResponse.success && candidatesResponse.candidates.length > 0) {
                             for (const { viewerId, candidate } of candidatesResponse.candidates) {
+                                if (viewerId === clientId) continue;
                                 const pc = this.viewerConnections.get(viewerId);
                                 if (pc && pc.remoteDescription) {
                                     try {
@@ -1562,16 +1620,18 @@
                             videoElement.srcObject = null;
                             videoElement.srcObject = remoteStream;
                             videoElement.classList.remove('hidden');
+                            videoElement.muted = false; // viewer should hear audio if browser allows it
                             
                             document.getElementById('camera-placeholder').classList.add('hidden');
                             document.getElementById('stream-status').textContent = 'Stream connected';
                             
-                            // Auto-play with error handling
+                            // Auto-play with error handling - browsers often block autoplay
+                            // with sound, so fall back to muted playback + a tap-to-unmute prompt
                             videoElement.play().catch(e => {
-                                console.log('Video play warning:', e.name);
-                                // Mute and try again if autoplay fails
+                                console.log('Video play warning (likely autoplay-with-sound block):', e.name);
                                 videoElement.muted = true;
                                 videoElement.play();
+                                UIManager.showUnmutePrompt(videoElement);
                             });
                         }
                     }
@@ -1952,7 +2012,10 @@
                             facingMode: facingMode,
                             frameRate: { ideal: 30, max: 30 }
                         }, 
-                        audio: false 
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true
+                        }
                     };
 
                     // Try to get the requested camera
@@ -1961,10 +2024,19 @@
                     } catch (error) {
                         console.warn(`Could not access ${facingMode} camera, trying default:`, error);
                         // Fallback to default camera
-                        this.stream = await navigator.mediaDevices.getUserMedia({ 
-                            video: true, 
-                            audio: false 
-                        });
+                        try {
+                            this.stream = await navigator.mediaDevices.getUserMedia({ 
+                                video: true, 
+                                audio: { echoCancellation: true, noiseSuppression: true }
+                            });
+                        } catch (fallbackError) {
+                            console.warn('Could not access camera with audio, trying video-only:', fallbackError);
+                            // Last resort: some devices/browsers may not have a usable mic at all
+                            this.stream = await navigator.mediaDevices.getUserMedia({ 
+                                video: true, 
+                                audio: false
+                            });
+                        }
                     }
                     
                     videoElement.srcObject = this.stream;
@@ -2116,6 +2188,10 @@
                 this.showPage('live-view-page');
                 document.getElementById('camera-name').textContent = cameraName;
                 currentCameraId = cameraId;
+
+                // Reset unmute prompt each time live view is opened
+                const unmuteBtn = document.getElementById('unmute-prompt-btn');
+                if (unmuteBtn) unmuteBtn.classList.add('hidden');
                 
                 if (isViewer) {
                     // Viewer mode - hide start stream button
@@ -2128,6 +2204,18 @@
                 }
                 
                 this.updateLiveView();
+            },
+
+            // Show a tap-to-unmute prompt when the browser blocked autoplay-with-sound
+            showUnmutePrompt: function(videoElement) {
+                const unmuteBtn = document.getElementById('unmute-prompt-btn');
+                if (!unmuteBtn) return;
+                unmuteBtn.classList.remove('hidden');
+                unmuteBtn.onclick = () => {
+                    videoElement.muted = false;
+                    videoElement.play().catch(() => {});
+                    unmuteBtn.classList.add('hidden');
+                };
             },
             
             // Show events page
@@ -2298,6 +2386,13 @@
                             const camera = userCameras.find(c => c.id == cameraId);
                             
                             if (camera) {
+                                // If this device IS the one streaming this camera, just
+                                // re-show the local feed - don't try to join as a viewer.
+                                if (WebRTCManager.isInitiator && WebRTCManager.isStreamingActive
+                                    && WebRTCManager.currentCameraId === cameraId) {
+                                    WebRTCManager.returnToOwnLiveView(cameraId, camera.name);
+                                    return;
+                                }
 
                                 // 🧹 Always cleanup old viewer session before new one
                                 await WebRTCManager.disconnectViewer();
@@ -2400,6 +2495,14 @@
                             const streamId = e.target.closest('.watch-stream-btn').dataset.stream;
                             const cameraId = e.target.closest('.watch-stream-btn').dataset.camera;
                             const cameraName = e.target.closest('.watch-stream-btn').dataset.name;
+
+                            // If this device IS the one streaming this camera, just
+                            // re-show the local feed - don't try to join as a viewer.
+                            if (WebRTCManager.isInitiator && WebRTCManager.isStreamingActive
+                                && WebRTCManager.currentCameraId === cameraId) {
+                                WebRTCManager.returnToOwnLiveView(cameraId, cameraName);
+                                return;
+                            }
                             
                             UIManager.showLiveView(cameraId, cameraName, true);
                             

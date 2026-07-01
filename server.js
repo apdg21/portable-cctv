@@ -608,10 +608,11 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
       cameraId,
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
+      streamerClientId: req.clientId, // per-tab ID of the streaming device
       createdAt: new Date().toISOString(),
       offers: new Map(), // Store offer per viewer (multi-viewer support)
       answers: new Map(), // Store multiple answers for multiple viewers
-      candidates: new Map(), // Store candidates per viewer
+      candidates: new Map(), // Store candidates per viewer (includes streamer's own)
       viewers: new Map(), // Track active viewers with last activity
       isActive: true,
       lastActivity: Date.now()
@@ -666,10 +667,11 @@ app.post('/api/webrtc/session', authenticateToken, async (req, res) => {
       cameraId,
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
+      streamerClientId: req.clientId, // per-tab ID of the streaming device
       createdAt: new Date().toISOString(),
       offers: new Map(), // Store offer per viewer (multi-viewer support)
       answers: new Map(), // Store multiple answers for multiple viewers
-      candidates: new Map(), // Store candidates per viewer
+      candidates: new Map(), // Store candidates per viewer (includes streamer's own)
       viewers: new Map(), // Track active viewers with last activity
       isActive: true,
       lastActivity: Date.now()
@@ -944,7 +946,10 @@ app.get('/api/webrtc/session/:streamId', authenticateToken, async (req, res) => 
     // Get viewer-specific data
     const viewerOffer = session.offers.get(viewerId) || session.offers.get('__broadcast__') || null;
     const viewerAnswer = session.answers.get(viewerId);
-    const viewerCandidates = session.candidates.get(viewerId) || [];
+    // Viewers need the STREAMER's ICE candidates (stored under streamerClientId),
+    // not their own candidates (which are stored under their own clientId).
+    const streamerClientId = session.streamerClientId;
+    const streamerCandidates = (streamerClientId && session.candidates.get(streamerClientId)) || [];
 
     res.json({ 
       success: true, 
@@ -954,7 +959,7 @@ app.get('/api/webrtc/session/:streamId', authenticateToken, async (req, res) => 
         cameraName: session.cameraName,
         offer: viewerOffer,
         answer: viewerAnswer,
-        candidates: viewerCandidates,
+        candidates: streamerCandidates,
         isActive: session.isActive,
         viewerCount: session.viewers.size
       }
@@ -1002,13 +1007,15 @@ app.get('/api/webrtc/session/:streamId/poll', authenticateToken, async (req, res
 
     // Check if viewer has already submitted an answer
     const hasViewerAnswer = session.answers.has(viewerId);
-    const viewerCandidates = session.candidates.get(viewerId) || [];
+    // Return streamer's ICE candidates so viewer can use them
+    const pollStreamerClientId = session.streamerClientId;
+    const pollStreamerCandidates = (pollStreamerClientId && session.candidates.get(pollStreamerClientId)) || [];
 
     res.json({ 
       success: true, 
       hasOffer: session.offers.has(viewerId) || session.offers.has('__broadcast__'),
       hasAnswer: hasViewerAnswer,
-      candidates: viewerCandidates,
+      candidates: pollStreamerCandidates,
       isActive: session.isActive,
       viewerCount: session.viewers.size
     });
@@ -1018,7 +1025,38 @@ app.get('/api/webrtc/session/:streamId/poll', authenticateToken, async (req, res
   }
 });
 
-// Get session statistics
+// ICE server config - returns STUN + TURN credentials from environment
+// Set TURN_USERNAME and TURN_CREDENTIAL in your Render environment variables.
+app.get('/api/ice-servers', authenticateToken, (req, res) => {
+  const iceServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ];
+
+  // Add TURN servers if credentials are configured
+  const turnUsername = process.env.TURN_USERNAME;
+  const turnCredential = process.env.TURN_CREDENTIAL;
+
+  if (turnUsername && turnCredential) {
+    // Open Relay / Metered TURN servers (port 80/443 bypass firewalls)
+    const turnServers = [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:443',
+      'turns:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:80?transport=tcp',
+    ];
+    turnServers.forEach(url => {
+      iceServers.push({ urls: url, username: turnUsername, credential: turnCredential });
+    });
+    console.log('ICE servers: STUN + TURN configured');
+  } else {
+    console.log('ICE servers: STUN only (set TURN_USERNAME + TURN_CREDENTIAL for TURN)');
+  }
+
+  res.json({ success: true, iceServers });
+});
+
+
 app.get('/api/webrtc/session/:streamId/stats', authenticateToken, async (req, res) => {
   try {
     const { streamId } = req.params;

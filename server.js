@@ -1018,7 +1018,38 @@ app.get('/api/webrtc/session/:streamId/poll', authenticateToken, async (req, res
   }
 });
 
-// Get session statistics
+// ICE server config - returns STUN + TURN credentials from environment
+// Set TURN_USERNAME and TURN_CREDENTIAL in your Render environment variables.
+app.get('/api/ice-servers', authenticateToken, (req, res) => {
+  const iceServers = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ];
+
+  // Add TURN servers if credentials are configured
+  const turnUsername = process.env.TURN_USERNAME;
+  const turnCredential = process.env.TURN_CREDENTIAL;
+
+  if (turnUsername && turnCredential) {
+    // Open Relay / Metered TURN servers (port 80/443 bypass firewalls)
+    const turnServers = [
+      'turn:openrelay.metered.ca:80',
+      'turn:openrelay.metered.ca:443',
+      'turns:openrelay.metered.ca:443',
+      'turn:openrelay.metered.ca:80?transport=tcp',
+    ];
+    turnServers.forEach(url => {
+      iceServers.push({ urls: url, username: turnUsername, credential: turnCredential });
+    });
+    console.log('ICE servers: STUN + TURN configured');
+  } else {
+    console.log('ICE servers: STUN only (set TURN_USERNAME + TURN_CREDENTIAL for TURN)');
+  }
+
+  res.json({ success: true, iceServers });
+});
+
+
 app.get('/api/webrtc/session/:streamId/stats', authenticateToken, async (req, res) => {
   try {
     const { streamId } = req.params;

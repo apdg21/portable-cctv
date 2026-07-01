@@ -126,10 +126,6 @@ const authenticateToken = (req, res, next) => {
       return res.status(403).json({ error: 'Invalid token' });
     }
     req.user = user;
-    // Per-browser-tab/device identifier, distinct from the account's userId.
-    // Multiple devices/tabs can be logged into the SAME account (same userId),
-    // so WebRTC signaling must key on this instead of userId to tell them apart.
-    req.clientId = req.headers['x-client-id'] || user.userId;
     next();
   });
 };
@@ -609,7 +605,7 @@ app.post('/api/webrtc/create-session', authenticateToken, async (req, res) => {
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
       createdAt: new Date().toISOString(),
-      offers: new Map(), // Store offer per viewer (multi-viewer support)
+      offer: null,
       answers: new Map(), // Store multiple answers for multiple viewers
       candidates: new Map(), // Store candidates per viewer
       viewers: new Map(), // Track active viewers with last activity
@@ -667,7 +663,7 @@ app.post('/api/webrtc/session', authenticateToken, async (req, res) => {
       cameraName: cameraName || 'Camera Stream',
       owner: req.user.userId,
       createdAt: new Date().toISOString(),
-      offers: new Map(), // Store offer per viewer (multi-viewer support)
+      offer: null,
       answers: new Map(), // Store multiple answers for multiple viewers
       candidates: new Map(), // Store candidates per viewer
       viewers: new Map(), // Track active viewers with last activity
@@ -712,24 +708,17 @@ app.post('/api/webrtc/session', authenticateToken, async (req, res) => {
 app.post('/api/webrtc/session/:sessionId/offer', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const { offer, viewerId } = req.body;
+    const { offer } = req.body;
     
     const session = webrtcSessions.get(sessionId);
     if (!session) {
       return res.status(404).json({ error: 'WebRTC session not found' });
     }
 
-    if (viewerId) {
-      // Per-viewer offer (multi-viewer streamer flow)
-      session.offers.set(viewerId, offer);
-    } else {
-      // Backward-compat: no viewerId means apply to all current viewers
-      // (used rarely; per-viewer path above is the normal one)
-      session.offers.set('__broadcast__', offer);
-    }
+    session.offer = offer;
     session.lastActivity = Date.now();
     
-    console.log(`Offer stored for session: ${sessionId}${viewerId ? ' viewer: ' + viewerId : ''}`);
+    console.log(`Offer stored for session: ${sessionId}`);
     res.json({ success: true });
   } catch (error) {
     console.error('Error storing offer:', error);
@@ -745,7 +734,7 @@ app.post('/api/webrtc/session/:sessionId/answer', authenticateToken, async (req,
   try {
     const { sessionId } = req.params;
     const { answer } = req.body;
-    const viewerId = req.clientId;
+    const viewerId = req.user.userId;
     
     const session = webrtcSessions.get(sessionId);
     if (!session) {
@@ -787,7 +776,7 @@ app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (r
   try {
     const { sessionId } = req.params;
     const { candidate } = req.body;
-    const viewerId = req.clientId;
+    const viewerId = req.user.userId;
 
     const session = webrtcSessions.get(sessionId);
     if (!session) {
@@ -828,7 +817,7 @@ app.post('/api/webrtc/session/:sessionId/candidate', authenticateToken, async (r
 app.post('/api/webrtc/session/:sessionId/leave', authenticateToken, async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const viewerId = req.clientId;
+    const viewerId = req.user.userId;
     
     const session = webrtcSessions.get(sessionId);
     if (session) {
@@ -836,7 +825,6 @@ app.post('/api/webrtc/session/:sessionId/leave', authenticateToken, async (req, 
       session.viewers.delete(viewerId);
       session.answers.delete(viewerId);
       session.candidates.delete(viewerId);
-      if (session.offers) session.offers.delete(viewerId);
       
       // Update viewer count
       const stream = activeStreams.get(sessionId);
@@ -910,7 +898,7 @@ app.get('/api/webrtc/session/:sessionId/answers', authenticateToken, async (req,
 app.get('/api/webrtc/session/:streamId', authenticateToken, async (req, res) => {
   try {
     const { streamId } = req.params;
-    const viewerId = req.clientId;
+    const viewerId = req.user.userId;
     
     let session = webrtcSessions.get(streamId);
     let sessionId = streamId;
@@ -942,7 +930,6 @@ app.get('/api/webrtc/session/:streamId', authenticateToken, async (req, res) => 
     session.lastActivity = Date.now();
     
     // Get viewer-specific data
-    const viewerOffer = session.offers.get(viewerId) || session.offers.get('__broadcast__') || null;
     const viewerAnswer = session.answers.get(viewerId);
     const viewerCandidates = session.candidates.get(viewerId) || [];
 
@@ -952,7 +939,7 @@ app.get('/api/webrtc/session/:streamId', authenticateToken, async (req, res) => 
         sessionId,
         cameraId: session.cameraId,
         cameraName: session.cameraName,
-        offer: viewerOffer,
+        offer: session.offer,
         answer: viewerAnswer,
         candidates: viewerCandidates,
         isActive: session.isActive,
@@ -969,7 +956,7 @@ app.get('/api/webrtc/session/:streamId', authenticateToken, async (req, res) => 
 app.get('/api/webrtc/session/:streamId/poll', authenticateToken, async (req, res) => {
   try {
     const { streamId } = req.params;
-    const viewerId = req.clientId;
+    const viewerId = req.user.userId;
     
     let session = webrtcSessions.get(streamId);
     let sessionId = streamId;
@@ -1006,7 +993,7 @@ app.get('/api/webrtc/session/:streamId/poll', authenticateToken, async (req, res
 
     res.json({ 
       success: true, 
-      hasOffer: session.offers.has(viewerId) || session.offers.has('__broadcast__'),
+      hasOffer: !!session.offer,
       hasAnswer: hasViewerAnswer,
       candidates: viewerCandidates,
       isActive: session.isActive,
@@ -1053,7 +1040,6 @@ app.get('/api/webrtc/session/:streamId/stats', authenticateToken, async (req, re
       stats: {
         sessionId,
         viewerCount: session.viewers.size,
-        viewerIds: Array.from(session.viewers.keys()),
         isActive: session.isActive,
         createdAt: session.createdAt,
         lastActivity: session.lastActivity,

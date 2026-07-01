@@ -881,9 +881,6 @@
                         <i class="fas fa-video fa-5x"></i>
                         <p style="margin-top: 10px;" id="placeholder-text">Connecting to stream...</p>
                     </div>
-                    <button id="unmute-prompt-btn" class="hidden" style="position:absolute; bottom:60px; left:50%; transform:translateX(-50%); z-index:5; padding:10px 18px; border-radius:20px; background:rgba(0,0,0,0.75); color:#fff; border:1px solid rgba(255,255,255,0.4); cursor:pointer;">
-                        <i class="fas fa-volume-mute"></i> Tap to enable sound
-                    </button>
                     <div class="streaming-indicator" id="streaming-role">Not Connected</div>
                     <div class="video-controls">
                         <!-- Streamer controls (only shown when user is streaming) -->
@@ -1116,28 +1113,7 @@
                     body: JSON.stringify({ cameraId, cameraName })
                 });
             },
-
-            // Fetch ICE server config (STUN + TURN) from server - cached so we
-            // only call the endpoint once per page load, not per peer connection.
-            _iceServerCache: null,
-            getIceServers: async function() {
-                if (this._iceServerCache) return this._iceServerCache;
-                try {
-                    const result = await this.request('/ice-servers');
-                    if (result.success && result.iceServers) {
-                        this._iceServerCache = result.iceServers;
-                        return result.iceServers;
-                    }
-                } catch (e) {
-                    console.warn('Could not fetch ICE server config, using STUN-only fallback:', e);
-                }
-                // Fallback: Google STUN only
-                return [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' },
-                ];
-            },
-
+            
             sendWebRTCOffer: async function(sessionId, offer, viewerId) {
                 return this.request(`/webrtc/session/${sessionId}/offer`, {
                     method: 'POST',
@@ -1265,10 +1241,13 @@
             maxReconnectAttempts: 5,
 
             // ── STREAMER: create a dedicated RTCPeerConnection for one viewer ──
-            _createViewerPC: async function(viewerId) {
-                const iceServers = await API.getIceServers();
+            _createViewerPC: function(viewerId) {
                 const configuration = {
-                    iceServers,
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                        { urls: 'stun:stun2.l.google.com:19302' }
+                    ],
                     iceCandidatePoolSize: 10,
                     bundlePolicy: 'max-bundle',
                     rtcpMuxPolicy: 'require'
@@ -1312,7 +1291,7 @@
 
                 if (!pc || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
                     console.log(`🆕 Creating new RTCPeerConnection for viewer ${viewerId}`);
-                    pc = await this._createViewerPC(viewerId);
+                    pc = this._createViewerPC(viewerId);
                     this.sentOffers.delete(viewerId); // force a fresh offer
                 }
 
@@ -1321,7 +1300,7 @@
                 // If we haven't sent an offer to this viewer yet, create+send one first
                 if (!this.sentOffers.has(viewerId) || sigState === 'stable') {
                     console.log(`📤 Sending offer to viewer ${viewerId}`);
-                    const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: false });
+                    const offer = await pc.createOffer({ offerToReceiveAudio: false, offerToReceiveVideo: false });
                     await pc.setLocalDescription(offer);
                     // Store the offer on the server, targeted at this specific viewer
                     await API.sendWebRTCOffer(this.sessionId, offer, viewerId);
@@ -1338,29 +1317,6 @@
                     }
                 } else if (viewerAnswer) {
                     console.warn(`Unexpected signaling state ${pc.signalingState} for viewer ${viewerId}`);
-                }
-            },
-
-            // Re-show the streamer's own local feed after navigating back to this page
-            // (e.g. after visiting Dashboard/Events and returning). Does NOT touch any
-            // active viewer connections - they keep running in the background regardless.
-            returnToOwnLiveView: function(cameraId, cameraName) {
-                UIManager.showLiveView(cameraId, cameraName, false);
-                document.getElementById('stream-status').textContent = 'WebRTC Streaming Active';
-                document.getElementById('start-live-camera').classList.add('hidden');
-                document.getElementById('stop-live-camera').classList.remove('hidden');
-
-                const videoElement = document.getElementById('camera-feed');
-                const placeholderElement = document.getElementById('camera-placeholder');
-                if (videoElement && this.localStream) {
-                    videoElement.srcObject = this.localStream;
-                    videoElement.classList.remove('hidden');
-                    videoElement.muted = true;
-                    videoElement.play().catch(() => {
-                        videoElement.muted = true;
-                        videoElement.play();
-                    });
-                    if (placeholderElement) placeholderElement.classList.add('hidden');
                 }
             },
 
@@ -1487,7 +1443,7 @@
                     this.reconnectAttempts = 0;
                     
                     // Initialize fresh WebRTC as viewer
-                    await this.initWebRTC(false);
+                    this.initWebRTC(false);
                     
                     console.log('🔄 Joining WebRTC stream with fresh connection:', streamId);
                     this.updateViewerUI('Connecting to WebRTC stream...');
@@ -1515,7 +1471,9 @@
             joinStreamForPreview: async function(streamId, videoElement) {
                 try {
                     const configuration = {
-                        iceServers: await API.getIceServers()
+                        iceServers: [
+                            { urls: 'stun:stun.l.google.com:19302' }
+                        ]
                     };
                     
                     const pc = new RTCPeerConnection(configuration);
@@ -1547,10 +1505,13 @@
             },
 
             // Enhanced WebRTC initialization with better debugging
-            initWebRTC: async function(isInitiator) {
-                const iceServers = await API.getIceServers();
+            initWebRTC: function(isInitiator) {
                 const configuration = {
-                    iceServers,
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' },
+                        { urls: 'stun:stun2.l.google.com:19302' }
+                    ],
                     iceCandidatePoolSize: 10,
                     bundlePolicy: 'max-bundle',
                     rtcpMuxPolicy: 'require'
@@ -1633,18 +1594,16 @@
                             videoElement.srcObject = null;
                             videoElement.srcObject = remoteStream;
                             videoElement.classList.remove('hidden');
-                            videoElement.muted = false; // viewer should hear audio if browser allows it
                             
                             document.getElementById('camera-placeholder').classList.add('hidden');
                             document.getElementById('stream-status').textContent = 'Stream connected';
                             
-                            // Auto-play with error handling - browsers often block autoplay
-                            // with sound, so fall back to muted playback + a tap-to-unmute prompt
+                            // Auto-play with error handling
                             videoElement.play().catch(e => {
-                                console.log('Video play warning (likely autoplay-with-sound block):', e.name);
+                                console.log('Video play warning:', e.name);
+                                // Mute and try again if autoplay fails
                                 videoElement.muted = true;
                                 videoElement.play();
-                                UIManager.showUnmutePrompt(videoElement);
                             });
                         }
                     }
@@ -1783,7 +1742,7 @@
                     if (this.pollingInterval) clearInterval(this.pollingInterval);
 
                     // Restart fresh WebRTC session lookup
-                    await this.initWebRTC(false);
+                    this.initWebRTC(false);
                     this.startPollingForOffer();
                     this.updateViewerUI(`Reconnecting... (Attempt ${this.reconnectAttempts})`);
                 } catch (error) {
@@ -2025,10 +1984,7 @@
                             facingMode: facingMode,
                             frameRate: { ideal: 30, max: 30 }
                         }, 
-                        audio: {
-                            echoCancellation: true,
-                            noiseSuppression: true
-                        }
+                        audio: false 
                     };
 
                     // Try to get the requested camera
@@ -2037,19 +1993,10 @@
                     } catch (error) {
                         console.warn(`Could not access ${facingMode} camera, trying default:`, error);
                         // Fallback to default camera
-                        try {
-                            this.stream = await navigator.mediaDevices.getUserMedia({ 
-                                video: true, 
-                                audio: { echoCancellation: true, noiseSuppression: true }
-                            });
-                        } catch (fallbackError) {
-                            console.warn('Could not access camera with audio, trying video-only:', fallbackError);
-                            // Last resort: some devices/browsers may not have a usable mic at all
-                            this.stream = await navigator.mediaDevices.getUserMedia({ 
-                                video: true, 
-                                audio: false
-                            });
-                        }
+                        this.stream = await navigator.mediaDevices.getUserMedia({ 
+                            video: true, 
+                            audio: false 
+                        });
                     }
                     
                     videoElement.srcObject = this.stream;
@@ -2201,10 +2148,6 @@
                 this.showPage('live-view-page');
                 document.getElementById('camera-name').textContent = cameraName;
                 currentCameraId = cameraId;
-
-                // Reset unmute prompt each time live view is opened
-                const unmuteBtn = document.getElementById('unmute-prompt-btn');
-                if (unmuteBtn) unmuteBtn.classList.add('hidden');
                 
                 if (isViewer) {
                     // Viewer mode - hide start stream button
@@ -2217,18 +2160,6 @@
                 }
                 
                 this.updateLiveView();
-            },
-
-            // Show a tap-to-unmute prompt when the browser blocked autoplay-with-sound
-            showUnmutePrompt: function(videoElement) {
-                const unmuteBtn = document.getElementById('unmute-prompt-btn');
-                if (!unmuteBtn) return;
-                unmuteBtn.classList.remove('hidden');
-                unmuteBtn.onclick = () => {
-                    videoElement.muted = false;
-                    videoElement.play().catch(() => {});
-                    unmuteBtn.classList.add('hidden');
-                };
             },
             
             // Show events page
@@ -2399,13 +2330,6 @@
                             const camera = userCameras.find(c => c.id == cameraId);
                             
                             if (camera) {
-                                // If this device IS the one streaming this camera, just
-                                // re-show the local feed - don't try to join as a viewer.
-                                if (WebRTCManager.isInitiator && WebRTCManager.isStreamingActive
-                                    && WebRTCManager.currentCameraId === cameraId) {
-                                    WebRTCManager.returnToOwnLiveView(cameraId, camera.name);
-                                    return;
-                                }
 
                                 // 🧹 Always cleanup old viewer session before new one
                                 await WebRTCManager.disconnectViewer();
@@ -2508,14 +2432,6 @@
                             const streamId = e.target.closest('.watch-stream-btn').dataset.stream;
                             const cameraId = e.target.closest('.watch-stream-btn').dataset.camera;
                             const cameraName = e.target.closest('.watch-stream-btn').dataset.name;
-
-                            // If this device IS the one streaming this camera, just
-                            // re-show the local feed - don't try to join as a viewer.
-                            if (WebRTCManager.isInitiator && WebRTCManager.isStreamingActive
-                                && WebRTCManager.currentCameraId === cameraId) {
-                                WebRTCManager.returnToOwnLiveView(cameraId, cameraName);
-                                return;
-                            }
                             
                             UIManager.showLiveView(cameraId, cameraName, true);
                             
@@ -3079,17 +2995,7 @@
                 const videoElement = document.getElementById('camera-feed');
                 const placeholderElement = document.getElementById('camera-placeholder');
                 
-                // Tell the server this stream has ended (so it disappears from
-                // "Live Streams"/"My Cameras" and viewers stop seeing it as active)
-                if (WebRTCManager.sessionId) {
-                    try {
-                        await API.stopStream(WebRTCManager.sessionId);
-                    } catch (err) {
-                        console.error('Error notifying server of stream stop:', err);
-                    }
-                }
-
-                // Stop camera and streaming locally (closes all viewer connections too)
+                // Stop camera and streaming
                 CameraManager.stopCamera(videoElement, placeholderElement);
                 await WebRTCManager.close();
                 

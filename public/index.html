@@ -1116,7 +1116,28 @@
                     body: JSON.stringify({ cameraId, cameraName })
                 });
             },
-            
+
+            // Fetch ICE server config (STUN + TURN) from server - cached so we
+            // only call the endpoint once per page load, not per peer connection.
+            _iceServerCache: null,
+            getIceServers: async function() {
+                if (this._iceServerCache) return this._iceServerCache;
+                try {
+                    const result = await this.request('/ice-servers');
+                    if (result.success && result.iceServers) {
+                        this._iceServerCache = result.iceServers;
+                        return result.iceServers;
+                    }
+                } catch (e) {
+                    console.warn('Could not fetch ICE server config, using STUN-only fallback:', e);
+                }
+                // Fallback: Google STUN only
+                return [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                ];
+            },
+
             sendWebRTCOffer: async function(sessionId, offer, viewerId) {
                 return this.request(`/webrtc/session/${sessionId}/offer`, {
                     method: 'POST',
@@ -1244,13 +1265,10 @@
             maxReconnectAttempts: 5,
 
             // ── STREAMER: create a dedicated RTCPeerConnection for one viewer ──
-            _createViewerPC: function(viewerId) {
+            _createViewerPC: async function(viewerId) {
+                const iceServers = await API.getIceServers();
                 const configuration = {
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' },
-                        { urls: 'stun:stun2.l.google.com:19302' }
-                    ],
+                    iceServers,
                     iceCandidatePoolSize: 10,
                     bundlePolicy: 'max-bundle',
                     rtcpMuxPolicy: 'require'
@@ -1294,7 +1312,7 @@
 
                 if (!pc || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
                     console.log(`🆕 Creating new RTCPeerConnection for viewer ${viewerId}`);
-                    pc = this._createViewerPC(viewerId);
+                    pc = await this._createViewerPC(viewerId);
                     this.sentOffers.delete(viewerId); // force a fresh offer
                 }
 
@@ -1469,7 +1487,7 @@
                     this.reconnectAttempts = 0;
                     
                     // Initialize fresh WebRTC as viewer
-                    this.initWebRTC(false);
+                    await this.initWebRTC(false);
                     
                     console.log('🔄 Joining WebRTC stream with fresh connection:', streamId);
                     this.updateViewerUI('Connecting to WebRTC stream...');
@@ -1497,9 +1515,7 @@
             joinStreamForPreview: async function(streamId, videoElement) {
                 try {
                     const configuration = {
-                        iceServers: [
-                            { urls: 'stun:stun.l.google.com:19302' }
-                        ]
+                        iceServers: await API.getIceServers()
                     };
                     
                     const pc = new RTCPeerConnection(configuration);
@@ -1531,13 +1547,10 @@
             },
 
             // Enhanced WebRTC initialization with better debugging
-            initWebRTC: function(isInitiator) {
+            initWebRTC: async function(isInitiator) {
+                const iceServers = await API.getIceServers();
                 const configuration = {
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' },
-                        { urls: 'stun:stun2.l.google.com:19302' }
-                    ],
+                    iceServers,
                     iceCandidatePoolSize: 10,
                     bundlePolicy: 'max-bundle',
                     rtcpMuxPolicy: 'require'
@@ -1770,7 +1783,7 @@
                     if (this.pollingInterval) clearInterval(this.pollingInterval);
 
                     // Restart fresh WebRTC session lookup
-                    this.initWebRTC(false);
+                    await this.initWebRTC(false);
                     this.startPollingForOffer();
                     this.updateViewerUI(`Reconnecting... (Attempt ${this.reconnectAttempts})`);
                 } catch (error) {
@@ -3066,7 +3079,17 @@
                 const videoElement = document.getElementById('camera-feed');
                 const placeholderElement = document.getElementById('camera-placeholder');
                 
-                // Stop camera and streaming
+                // Tell the server this stream has ended (so it disappears from
+                // "Live Streams"/"My Cameras" and viewers stop seeing it as active)
+                if (WebRTCManager.sessionId) {
+                    try {
+                        await API.stopStream(WebRTCManager.sessionId);
+                    } catch (err) {
+                        console.error('Error notifying server of stream stop:', err);
+                    }
+                }
+
+                // Stop camera and streaming locally (closes all viewer connections too)
                 CameraManager.stopCamera(videoElement, placeholderElement);
                 await WebRTCManager.close();
                 
